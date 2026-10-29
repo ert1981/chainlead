@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.pyc
+*.db
+*.db-*
+*.x402
+.pytest_cache
+build
+dist
+*.egg-info
+tests
+sample-output

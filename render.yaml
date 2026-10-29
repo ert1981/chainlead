@@ -1,0 +1,20 @@
+# Render Blueprint: free web service built from the Dockerfile. Fill CHAINLEAD_PUBLIC_BASE_URL with the
+# final https://<name>.onrender.com origin BEFORE registering onchain (it is part of the manifest hash).
+services:
+  - type: web
+    name: chainlead
+    runtime: docker
+    plan: free
+    region: virginia
+    healthCheckPath: /health
+    envVars:
+      - key: CHAINLEAD_PUBLIC_BASE_URL
+        sync: false
+      - key: CHAINLEAD_PAYEE_ADDRESS
+        value: "0x93714D5970f511Ac22f0E5635D3fBF538f717cd4"
+      - key: CHAINLEAD_CREATOR_ADDRESS
+        value: "0x93714d5970f511ac22f0e5635d3fbf538f717cd4"
+      - key: CHAINLEAD_PRICE_USDC
+        value: "0.50"
+      - key: GITHUB_TOKEN
+        sync: false

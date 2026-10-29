@@ -1,6 +1,8 @@
 services:
   chainlead:
     build: .
+    # Multi-tenant REST API (needs CHAINLEAD_API_KEYS). For the paid x402 tool use the image's default command.
+    command: ["sh", "-c", "exec chainlead serve --host 0.0.0.0 --port 8787"]
     ports: ["127.0.0.1:8787:8787"]
     env_file: .env
     volumes: ["chainlead-data:/data"]
