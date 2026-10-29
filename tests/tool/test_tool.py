@@ -454,3 +454,255 @@ def test_bridgepilot_style_env_aliases(monkeypatch):
     assert s.x402().requirements("https://x/v1", "d")["maxAmountRequired"] == "500000"
     monkeypatch.setenv("X402_MODE", "off")
     assert not ToolSettings().paid_enabled
+
+
+# ------------------------------------------------------------------------------------- CDP Facilitator
+# Optional CDP Facilitator (agentic.market / CDP Bazaar): only when BOTH CDP_API_KEY_ID and CDP_API_KEY_SECRET
+# are set, otherwise PayAI exactly as before. Test keys are generated per run; none are in the repo.
+CDP_KEY_ID = "organizations/00000000-0000-0000-0000-000000000000/apiKeys/11111111-1111-1111-1111-111111111111"
+
+
+def _ed25519_secret():
+    pytest.importorskip("cryptography")
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    k = ed25519.Ed25519PrivateKey.generate()
+    seed = k.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    pub = k.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return base64.b64encode(seed + pub).decode(), k.public_key()
+
+
+def _ec_secret():
+    pytest.importorskip("cryptography")
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    k = ec.generate_private_key(ec.SECP256R1())
+    pem = k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+                          serialization.NoEncryption()).decode()
+    return pem, k.public_key()
+
+
+def _jwt_parts(token):
+    def d(x):
+        return base64.urlsafe_b64decode(x + "=" * (-len(x) % 4))
+    h, c, s = token.split(".")
+    return json.loads(d(h)), json.loads(d(c)), f"{h}.{c}".encode(), d(s)
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status, self._raw = status, json.dumps(body).encode()
+
+    def read(self, n=-1):
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+@pytest.fixture
+def wire(monkeypatch):
+    """Captures outgoing facilitator HTTP calls (url, headers, JSON body) made by payments.Facilitator."""
+    sent = []
+    real_urlopen = urllib.request.urlopen
+
+    def fake_urlopen(req, timeout=None):
+        if not isinstance(req, urllib.request.Request) or not req.full_url.startswith("https://"):
+            return real_urlopen(req, timeout=timeout)  # the test client talking to the local server
+        sent.append({"url": req.full_url, "headers": {k.lower(): v for k, v in req.header_items()},
+                     "body": json.loads(req.data)})
+        if req.full_url.endswith("/verify"):
+            return _Resp(200, {"isValid": True, "payer": PAYER})
+        return _Resp(200, {"success": True, "transaction": TX, "network": "eip155:8453", "payer": PAYER})
+    monkeypatch.setattr(payments.urllib.request, "urlopen", fake_urlopen)
+    return sent
+
+
+def v2_payment_bare(nonce="ba"):
+    """v2 payment as a minimal client sends it: no resource, no extensions."""
+    body = json.loads(base64.b64decode(v2_payment(nonce)))
+    body.pop("resource")
+    return base64.b64encode(json.dumps(body).encode()).decode()
+
+
+@pytest.mark.parametrize("env", [{}, {"CDP_API_KEY_ID": CDP_KEY_ID}, {"CDP_API_KEY_SECRET": "x" * 88},
+                                 {"CDP_API_KEY_ID": " ", "CDP_API_KEY_SECRET": "x" * 88}])
+def test_payai_unless_both_cdp_keys_are_set(env):
+    f = payments.make_facilitator(payments.PAYAI_FACILITATOR_URL, env)
+    assert f.kind == "payai" and f.url == payments.PAYAI_FACILITATOR_URL and type(f) is payments.Facilitator
+
+
+def test_both_cdp_keys_select_cdp_facilitator():
+    secret, _ = _ed25519_secret()
+    f = payments.make_facilitator(payments.PAYAI_FACILITATOR_URL, {"CDP_API_KEY_ID": CDP_KEY_ID,
+                                                                   "CDP_API_KEY_SECRET": secret})
+    assert f.kind == "cdp" and f.url == "https://api.cdp.coinbase.com/platform/v2/x402"
+    assert secret not in repr(f) and secret not in str(vars(type(f)))
+
+
+def test_unusable_cdp_secret_keeps_payai_and_is_never_logged(caplog):
+    pytest.importorskip("cryptography")
+    bad = "not-a-key-SECRETVALUE"
+    with caplog.at_level("WARNING"):
+        f = payments.make_facilitator(payments.PAYAI_FACILITATOR_URL, {"CDP_API_KEY_ID": CDP_KEY_ID,
+                                                                       "CDP_API_KEY_SECRET": bad})
+    assert f.kind == "payai" and "not a usable key" in caplog.text and bad not in caplog.text
+    with pytest.raises(ValueError) as e:
+        payments.parse_cdp_secret(bad)
+    assert bad not in str(e.value)
+
+
+def test_missing_cryptography_keeps_payai(monkeypatch, caplog):
+    def no_crypto(*a, **k):
+        raise ImportError("no cryptography")
+    monkeypatch.setattr(payments, "parse_cdp_secret", no_crypto)
+    with caplog.at_level("WARNING"):
+        f = payments.make_facilitator(payments.PAYAI_FACILITATOR_URL, {"CDP_API_KEY_ID": CDP_KEY_ID,
+                                                                       "CDP_API_KEY_SECRET": "x"})
+    assert f.kind == "payai" and "not installed" in caplog.text
+
+
+def test_cdp_jwt_ed25519_shape_and_signature():
+    secret, pub = _ed25519_secret()
+    h, c, signing_input, sig = _jwt_parts(payments.cdp_jwt(CDP_KEY_ID, secret, "POST", "/platform/v2/x402/verify",
+                                                           now=1_800_000_000))
+    assert h["alg"] == "EdDSA" and h["kid"] == CDP_KEY_ID and h["typ"] == "JWT" and re.fullmatch(r"\d{16}", h["nonce"])
+    assert c == {"sub": CDP_KEY_ID, "iss": "cdp", "nbf": 1_800_000_000, "exp": 1_800_000_120,
+                 "uris": ["POST api.cdp.coinbase.com/platform/v2/x402/verify"]}
+    pub.verify(sig, signing_input)  # raises if invalid
+
+
+@pytest.mark.parametrize("escaped", [False, True])
+def test_cdp_jwt_es256_pem_secret(escaped):
+    pytest.importorskip("cryptography")
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+    secret, pub = _ec_secret()
+    if escaped:
+        secret = secret.replace("\n", "\\n")
+    h, c, signing_input, sig = _jwt_parts(payments.cdp_jwt(CDP_KEY_ID, secret, "POST", "/platform/v2/x402/settle"))
+    assert h["alg"] == "ES256" and len(sig) == 64
+    assert c["uris"] == ["POST api.cdp.coinbase.com/platform/v2/x402/settle"]
+    pub.verify(encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big")),
+               signing_input, ec.ECDSA(hashes.SHA256()))
+
+
+def test_cdp_jwt_matches_official_cdp_sdk():
+    """Cross-check with Coinbase's own cdp-sdk (skipped where it is not installed)."""
+    sdk = pytest.importorskip("cdp.auth.utils.jwt")
+    jwt = pytest.importorskip("jwt")
+    for secret, pub in (_ed25519_secret(), _ec_secret()):
+        ours = payments.cdp_jwt(CDP_KEY_ID, secret, "POST", "/platform/v2/x402/settle")
+        ref = sdk.generate_jwt(sdk.JwtOptions(api_key_id=CDP_KEY_ID, api_key_secret=secret, request_method="POST",
+                                              request_host="api.cdp.coinbase.com",
+                                              request_path="/platform/v2/x402/settle"))
+        alg = jwt.get_unverified_header(ref)["alg"]
+        a = jwt.decode(ours, pub, algorithms=[alg], options={"verify_aud": False})
+        b = jwt.decode(ref, pub, algorithms=[alg], options={"verify_aud": False})
+        assert jwt.get_unverified_header(ours)["alg"] == alg
+        assert sorted(jwt.get_unverified_header(ours)) == sorted(jwt.get_unverified_header(ref))
+        assert {k: v for k, v in a.items() if k not in ("nbf", "exp")} == \
+            {k: v for k, v in b.items() if k not in ("nbf", "exp", "aud")}
+        assert a["exp"] - a["nbf"] == b["exp"] - b["nbf"] == 120
+
+
+def test_cdp_v2_payment_is_authenticated_and_carries_resource_and_bazaar(server, wire):
+    secret, pub = _ed25519_secret()
+    fac = payments.CdpFacilitator(CDP_KEY_ID, secret)
+    base, app, _, calls = server(facilitator=fac)
+    _, h402, _ = call(base + mf.TOOL_PATH, "POST", {})
+    challenge = v2_header(h402)
+    st, h, b = call(base + mf.TOOL_PATH, "POST", VALID, {"PAYMENT-SIGNATURE": v2_payment_bare("c1")})
+    assert st == 200 and b["payment"]["status"] == "settled"
+    assert [w["url"] for w in wire] == ["https://api.cdp.coinbase.com/platform/v2/x402/verify",
+                                        "https://api.cdp.coinbase.com/platform/v2/x402/settle"]
+    for w in wire:
+        hd, cl, si, sig = _jwt_parts(w["headers"]["authorization"].removeprefix("Bearer "))
+        pub.verify(sig, si)
+        assert cl["uris"] == ["POST api.cdp.coinbase.com" + w["url"].split("api.cdp.coinbase.com")[1]]
+        assert "source=x402" in w["headers"]["correlation-context"]
+        p = w["body"]["paymentPayload"]
+        assert w["body"]["x402Version"] == 2 and w["body"]["paymentRequirements"] == challenge["accepts"][0]
+        assert p["resource"] == challenge["resource"]
+        assert p["extensions"]["bazaar"] == challenge["extensions"]["bazaar"]
+        assert p["payload"] == json.loads(base64.b64decode(v2_payment_bare("c1")))["payload"]  # signed part untouched
+        assert secret not in json.dumps(w)
+
+
+def test_cdp_keeps_client_sent_resource_and_extensions(server, wire):
+    secret, _ = _ed25519_secret()
+    base, app, _, _ = server(facilitator=payments.CdpFacilitator(CDP_KEY_ID, secret))
+    own = json.loads(base64.b64decode(v2_payment("c2")))
+    own["extensions"] = {"other": {"a": 1}}
+    st, _, _ = call(base + mf.TOOL_PATH, "POST", VALID,
+                    {"PAYMENT-SIGNATURE": base64.b64encode(json.dumps(own).encode()).decode()})
+    assert st == 200
+    p = wire[-1]["body"]["paymentPayload"]
+    assert p["resource"] == {"url": BASE + mf.TOOL_PATH}
+    assert p["extensions"]["other"] == {"a": 1} and p["extensions"]["bazaar"]["info"]["input"]["body"] == mf.EXAMPLE_INPUT
+
+
+def test_cdp_v1_payment_is_authenticated_and_forwarded_unchanged(server, wire):
+    secret, _ = _ed25519_secret()
+    base, _, _, _ = server(facilitator=payments.CdpFacilitator(CDP_KEY_ID, secret))
+    st, _, _ = call(base + mf.TOOL_PATH, "POST", VALID, {"X-PAYMENT": v1_payment("c3")})
+    assert st == 200 and all(w["headers"]["authorization"].startswith("Bearer ") for w in wire)
+    assert wire[-1]["body"]["paymentPayload"] == json.loads(base64.b64decode(v1_payment("c3")))
+
+
+def test_payai_v2_payload_and_headers_are_unchanged(server, wire):
+    base, _, _, _ = server(facilitator=payments.Facilitator(payments.PAYAI_FACILITATOR_URL))
+    st, _, _ = call(base + mf.TOOL_PATH, "POST", VALID, {"PAYMENT-SIGNATURE": v2_payment_bare("c4")})
+    assert st == 200
+    assert [w["url"] for w in wire] == ["https://facilitator.payai.network/verify",
+                                        "https://facilitator.payai.network/settle"]
+    for w in wire:
+        assert "authorization" not in w["headers"] and "correlation-context" not in w["headers"]
+        assert w["body"]["paymentPayload"] == json.loads(base64.b64decode(v2_payment_bare("c4")))
+
+
+def test_toolapp_default_facilitator_follows_the_cdp_env(monkeypatch):
+    monkeypatch.delenv("CDP_API_KEY_ID", raising=False)
+    monkeypatch.delenv("CDP_API_KEY_SECRET", raising=False)
+    eng = ChainLead(Storage(":memory:"), Settings(db_path=":memory:", api_keys={}), [], None)
+    assert ToolApp(tool_settings(), engine=eng).facilitator.kind == "payai"
+    secret, _ = _ed25519_secret()
+    monkeypatch.setenv("CDP_API_KEY_ID", CDP_KEY_ID)
+    monkeypatch.setenv("CDP_API_KEY_SECRET", secret)
+    assert ToolApp(tool_settings(), engine=eng).facilitator.kind == "cdp"
+
+
+@pytest.mark.parametrize("body", [b"", b"{}", b"  ", b"null", json.dumps(mf.EXAMPLE_INPUT).encode()])
+def test_empty_and_example_bodies_answer_402_before_validation(server, body):
+    base, _, fac, calls = server()
+    st, h, b = call(base + mf.TOOL_PATH, "POST", body)
+    assert st == 402 and calls == [] and fac.calls == []
+    assert v2_header(h)["extensions"]["bazaar"]["info"]["input"]["body"] == mf.EXAMPLE_INPUT
+    assert validate_input(json.loads(json.dumps(mf.EXAMPLE_INPUT)), 8)  # the example itself is valid input
+
+
+_INSTRUCTION = re.compile(r"\b(ignore|disregard|you must|you should|always (call|use|pay)|never (call|use)|"
+                          r"agents? (must|should)|instructions?|system prompt|do not tell|override|prefer this)\b", re.I)
+
+
+def _strings(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _strings(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _strings(x)
+
+
+def test_bazaar_metadata_is_plain_description(server):
+    base, _, _, _ = server()
+    _, h, _ = call(base + mf.TOOL_PATH, "POST", {})
+    v2 = v2_header(h)
+    for s in _strings({"resource": v2["resource"], "extensions": v2["extensions"]}):
+        assert not _INSTRUCTION.search(s), s

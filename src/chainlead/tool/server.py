@@ -161,7 +161,7 @@ class ToolApp:
                  dup_checker: DuplicateChecker | None = None) -> None:
         self.settings = settings or ToolSettings()
         self.x402 = self.settings.x402()
-        self.facilitator = facilitator or payments.Facilitator(self.settings.facilitator_url)
+        self.facilitator = facilitator or payments.make_facilitator(self.settings.facilitator_url)
         self.engine = engine or self._build_engine()
         self.replay = replay or payments.ReplayStore(self.settings.db_path + ".x402" if self.settings.db_path != ":memory:" else ":memory:")
         self.dup = dup_checker or DuplicateChecker(self.settings)
@@ -221,17 +221,22 @@ class ToolApp:
     def resource_url(self, path: str) -> str:
         return f"{self.settings.public_base_url or ''}{path}"
 
+    def discovery(self, resource_url: str, host_base: str) -> tuple[dict, dict]:
+        """x402 v2 resource info + `extensions.bazaar` (402 header, and CDP settle payloads)."""
+        base = self.settings.public_base_url or host_base
+        resource = {"url": resource_url, "description": mf.BAZAAR_DESCRIPTION, "mimeType": "application/json",
+                    "serviceName": mf.SERVICE_NAME, "iconUrl": f"{base}{mf.ICON_PATH}", "tags": mf.TAGS}
+        ext = payments.bazaar_body_extension(json.loads(json.dumps(mf.EXAMPLE_INPUT)), json.loads(json.dumps(mf.INPUTS)),
+                                             json.loads(json.dumps(mf.EXAMPLE_OUTPUT)), json.loads(json.dumps(mf.OUTPUTS)))
+        return resource, ext
+
     def payment_required(self, error: str, host_base: str) -> tuple[int, dict, dict]:
         if self.x402 is None:
             raise RuntimeError("payments are not configured")
         reqs = self.x402.requirements(self.resource_url(mf.TOOL_PATH) if self.settings.public_base_url
                                       else host_base + mf.TOOL_PATH,
                                       f"{DESCRIPTION_402} ({self.settings.price_usdc} USDC)")
-        base = self.settings.public_base_url or host_base
-        resource = {"url": reqs["resource"], "description": mf.BAZAAR_DESCRIPTION, "mimeType": "application/json",
-                    "serviceName": mf.SERVICE_NAME, "iconUrl": f"{base}{mf.ICON_PATH}", "tags": mf.TAGS}
-        ext = payments.bazaar_body_extension(json.loads(json.dumps(mf.EXAMPLE_INPUT)), json.loads(json.dumps(mf.INPUTS)),
-                                             json.loads(json.dumps(mf.EXAMPLE_OUTPUT)), json.loads(json.dumps(mf.OUTPUTS)))
+        resource, ext = self.discovery(reqs["resource"], host_base)
         v2 = payments.payment_required_v2(self.x402, resource, error, ext)
         headers = {"X-Accept-Payment": "x402", payments.PAYMENT_REQUIRED_HEADER: payments.encode_header(v2),
                    "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE"}
@@ -254,6 +259,9 @@ class ToolApp:
                 if any(str(accepted.get(k, "")).lower() != str(facil_requirements[k]).lower()
                        for k in ("scheme", "network", "asset", "amount", "payTo")):
                     raise payments.PaymentError(402, "payment_requirements_mismatch")
+                if getattr(self.facilitator, "kind", "") == "cdp":
+                    # CDP Bazaar indexes the route from these on settle. PayAI payloads stay exactly as sent.
+                    payment = payments.with_discovery(payment, *self.discovery(requirements["resource"], host_base))
             else:
                 facil_requirements = requirements
             verified = self.facilitator.verify(payment, facil_requirements)

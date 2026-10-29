@@ -13,6 +13,8 @@ dependencies = []   # core runs on the Python standard library only
 
 [project.optional-dependencies]
 yaml = ["PyYAML>=6"]
+# CDP Facilitator JWT auth (only used when CDP_API_KEY_ID and CDP_API_KEY_SECRET are both set)
+cdp = ["cryptography>=42"]
 dev = ["pytest>=7", "pycryptodome>=3.18"]
 
 [project.scripts]

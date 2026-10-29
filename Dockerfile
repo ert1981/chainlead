@@ -1,11 +1,11 @@
 # ChainLead: paid x402 tool endpoint for agents (OpenSea Tools / ERC-8257). Fits Render's free web service.
-# Standard library only: no third-party runtime dependencies.
+# Standard library only, plus `cryptography` for the optional CDP Facilitator auth (used only when both CDP keys are set).
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN pip install --no-cache-dir . && useradd -m -u 10001 chainlead && mkdir -p /data && chown chainlead /data
+RUN pip install --no-cache-dir ".[cdp]" && useradd -m -u 10001 chainlead && mkdir -p /data && chown chainlead /data
 USER chainlead
 # Public, non-secret defaults. Secrets (GITHUB_TOKEN, EXPLORER_API_KEY) come from the host environment only.
 ENV CHAINLEAD_DB=/data/chainlead.db \

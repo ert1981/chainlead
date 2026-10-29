@@ -12,11 +12,20 @@ MintScope's payments module to the standard library.
    then /settle moves the USDC onchain. The result is returned ONLY after settlement succeeds.
 
 ChainLead never holds a key or signs anything: the facilitator broadcasts the caller's own signed
-authorization and the USDC goes straight to the payee address. Default facilitator: PayAI."""
+authorization and the USDC goes straight to the payee address. Default facilitator: PayAI.
+
+CDP Facilitator (agentic.market / CDP Bazaar indexing): used only when BOTH CDP_API_KEY_ID and
+CDP_API_KEY_SECRET are set (same rule as MintScope). Each verify/settle then carries a short-lived Bearer JWT
+built like the official cdp-sdk (EdDSA for base64 Ed25519 secrets, ES256 for PEM EC secrets); this needs the
+optional `cryptography` package (`pip install .[cdp]`). The key values are read from the environment, held in
+memory only, and never logged, returned or stored in settings."""
 from __future__ import annotations
 
 import base64
 import json
+import logging
+import os
+import random
 import re
 import sqlite3
 import threading
@@ -26,6 +35,10 @@ import urllib.request
 from dataclasses import dataclass
 
 PAYAI_FACILITATOR_URL = "https://facilitator.payai.network"
+CDP_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402"
+CDP_HOST = "api.cdp.coinbase.com"
+CDP_ROUTE = "/platform/v2/x402"
+CDP_X402_SOURCE_VERSION = "2.0.0"
 USDC = {
     # network: (chain id, USDC contract, EIP-712 domain name of that USDC contract)
     "base": (8453, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "USD Coin"),
@@ -199,11 +212,15 @@ class Facilitator:
         self.url = url.rstrip("/")
         self.timeout = timeout
 
+    def _auth_headers(self, path: str) -> dict:
+        return {}
+
     def _post(self, path: str, payment: dict, requirements: dict) -> tuple[int, object]:
         body = json.dumps({"x402Version": payment.get("x402Version", 1), "paymentPayload": payment,
                            "paymentRequirements": requirements}).encode()
         req = urllib.request.Request(f"{self.url}{path}", data=body, method="POST", headers={
-            "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "ChainLead-x402/0.2"})
+            "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "ChainLead-x402/0.2",
+            **self._auth_headers(path)})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:  # nosec B310 - https checked in __init__
                 raw = r.read(200_000)
@@ -240,6 +257,102 @@ class Facilitator:
         if not isinstance(data, dict) or data.get("success") is not True or not data.get("transaction"):
             return None, False
         return data, False
+
+
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def parse_cdp_secret(secret: str):
+    """(private key, alg) from a CDP API key secret: PEM EC -> ES256, base64 Ed25519 (seed+pub) -> EdDSA.
+    Raises ImportError without `cryptography`, ValueError (never containing the key) if unusable."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+    s = secret.replace("\\n", "\n") if "\\n" in secret else secret
+    if "-----BEGIN" in s:
+        try:
+            key = serialization.load_pem_private_key(s.encode(), password=None)
+            if isinstance(key, ec.EllipticCurvePrivateKey):
+                return key, "ES256"
+        except (ValueError, TypeError):
+            pass
+    else:
+        try:
+            raw = base64.b64decode(s.strip(), validate=True)
+        except ValueError:
+            raw = b""
+        if len(raw) == 64:
+            return ed25519.Ed25519PrivateKey.from_private_bytes(raw[:32]), "EdDSA"
+    raise ValueError("CDP_API_KEY_SECRET must be a PEM EC key or a base64 Ed25519 key")
+
+
+def cdp_jwt(key_id: str, secret: str, method: str, path: str, now: float | None = None) -> str:
+    """Bearer JWT for one CDP API call, same header and claims as cdp-sdk's generate_jwt."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+    key, alg = parse_cdp_secret(secret)
+    t = int(time.time() if now is None else now)
+    header = {"alg": alg, "kid": key_id, "typ": "JWT",
+              "nonce": "".join(random.SystemRandom().choice("0123456789") for _ in range(16))}
+    claims = {"sub": key_id, "iss": "cdp", "nbf": t, "exp": t + 120, "uris": [f"{method} {CDP_HOST}{path}"]}
+    signing_input = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}." \
+                    f"{_b64url(json.dumps(claims, separators=(',', ':')).encode())}".encode()
+    if alg == "EdDSA":
+        sig = key.sign(signing_input)
+    else:
+        r, s_ = decode_dss_signature(key.sign(signing_input, ec.ECDSA(hashes.SHA256())))
+        sig = r.to_bytes(32, "big") + s_.to_bytes(32, "big")
+    return f"{signing_input.decode()}.{_b64url(sig)}"
+
+
+class CdpFacilitator(Facilitator):
+    """CDP Facilitator: same verify()/settle() contract and transport as Facilitator, plus a fresh JWT per call."""
+    kind = "cdp"
+
+    def __init__(self, api_key_id: str, api_key_secret: str, timeout: float = FACILITATOR_TIMEOUT):
+        parse_cdp_secret(api_key_secret)  # fail early (ImportError / ValueError) so the caller can fall back
+        super().__init__(CDP_FACILITATOR_URL, timeout)
+        self._key_id, self._key_secret = api_key_id, api_key_secret
+
+    def __repr__(self) -> str:  # never show the key
+        return f"CdpFacilitator(url={self.url!r})"
+
+    def _auth_headers(self, path: str) -> dict:
+        return {"Authorization": "Bearer " + cdp_jwt(self._key_id, self._key_secret, "POST", f"{CDP_ROUTE}{path}"),
+                "Correlation-Context": "sdk_version=chainlead,sdk_language=python,source=x402,"
+                                       f"source_version={CDP_X402_SOURCE_VERSION}"}
+
+
+def make_facilitator(settings_url: str, env=None):
+    """CDP only when BOTH key env vars are set; otherwise the configured (PayAI) facilitator, unchanged."""
+    env = os.environ if env is None else env
+    key_id = (env.get("CDP_API_KEY_ID") or "").strip()
+    key_secret = (env.get("CDP_API_KEY_SECRET") or "").strip()
+    if key_id and key_secret:
+        try:
+            return CdpFacilitator(key_id, key_secret)
+        except ImportError:
+            logging.getLogger("chainlead.tool").warning(
+                "CDP keys set but the 'cryptography' package is not installed; using %s", settings_url)
+        except ValueError:
+            logging.getLogger("chainlead.tool").warning(
+                "CDP keys set but CDP_API_KEY_SECRET is not a usable key; using %s", settings_url)
+    return Facilitator(settings_url)
+
+
+def with_discovery(payment: dict, resource: dict, extensions: dict | None) -> dict:
+    """CDP Bazaar indexing needs paymentPayload.resource and paymentPayload.extensions.bazaar on settle.
+    Fields the client already sent are kept; the signed authorization is not touched."""
+    out = dict(payment)
+    if out.get("resource") is None:
+        out["resource"] = resource
+    bazaar = (extensions or {}).get("bazaar")
+    if bazaar is not None:
+        ext = dict(out["extensions"]) if isinstance(out.get("extensions"), dict) else {}
+        ext.setdefault("bazaar", bazaar)
+        out["extensions"] = ext
+    return out
 
 
 class ReplayStore:
