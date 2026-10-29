@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from .brief import build_brief, to_markdown
@@ -35,7 +36,9 @@ log = logging.getLogger("chainlead")
 
 class ChainLead:
     def __init__(self, storage: Storage | None = None, settings: Settings | None = None,
-                 providers: list[Any] | None = None, onchain: OnChainProvider | None = None) -> None:
+                 providers: list[Any] | None = None, onchain: OnChainProvider | None = None,
+                 evidence_workers: int = 4) -> None:
+        self.evidence_workers = max(1, int(evidence_workers))
         self.settings = settings or load_settings()
         self.storage = storage or Storage(self.settings.db_path)
         self.providers = providers or []
@@ -175,7 +178,8 @@ class ChainLead:
 
         # 3-4. evidence + identity -------------------------------------------
         projects: list[tuple[Project, dict, dict]] = []
-        for m in merged:
+
+        def collect(m: dict) -> list:
             parts = []
             for member in m["members"]:
                 if out_of_time():
@@ -189,6 +193,16 @@ class ChainLead:
                     g = router.providers.get("the_graph")
                     if g and g.available():
                         parts.append(safe_call(g, "graph", spec, lambda g=g, spec=spec: g.activity(spec)))
+            return parts
+
+        # Candidates are independent, so their evidence is fetched concurrently (results keep input order).
+        if self.evidence_workers > 1 and len(merged) > 1:
+            with ThreadPoolExecutor(max_workers=min(self.evidence_workers, len(merged)),
+                                    thread_name_prefix="chainlead-evidence") as pool:
+                all_parts = list(pool.map(collect, merged))
+        else:
+            all_parts = [collect(m) for m in merged]
+        for m, parts in zip(merged, all_parts):
             bundle = merge_bundles(*[x for x in parts if x])
             proj = build_project(m, bundle)
             if m.get("topics"):
