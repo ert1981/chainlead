@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -49,7 +50,9 @@ class ChainLead:
         from .providers.block_explorer import BlockExplorerProvider
         from .providers.github import GitHubProvider
         from .providers.public_web import PublicWebProvider
-        providers: list[Any] = [GitHubProvider(settings), PublicWebProvider(settings), BlockExplorerProvider(settings)]
+        from .providers.the_graph import TheGraphProvider
+        providers: list[Any] = [GitHubProvider(settings), PublicWebProvider(settings), BlockExplorerProvider(settings),
+                                TheGraphProvider(settings)]
         onchain = OnChainProvider(settings) if settings.rpc_urls else None
         if mock:
             from .providers.mock import MockProvider, MockRpcClient, load_fixture
@@ -61,15 +64,38 @@ class ChainLead:
 
     # ------------------------------------------------------------------ campaigns
     def create_campaign(self, spec: dict, tenant: str = "local") -> dict:
+        if not isinstance(spec, dict):
+            raise ValueError("campaign spec must be a JSON object")
         assert_no_secrets(spec)
         spec = dict(spec)
+        server_fields = sorted(set(spec) & SERVER_ASSIGNED)
+        if server_fields:
+            # A caller-chosen id would overwrite (and re-budget) an existing campaign.
+            raise ValueError(f"fields {server_fields} are assigned by the server")
         spec["tenant"] = tenant
         if "target_chains" in spec:
+            if not isinstance(spec["target_chains"], list):
+                raise ValueError("target_chains must be a list of chain ids")
             spec["target_chains"] = [int(x) for x in spec["target_chains"]]
             for cid in spec["target_chains"]:
                 get_chain(cid)
-        if float(spec.get("budget_usd", 1.0)) < 0:
-            raise ValueError("budget_usd must be >= 0")
+        spec["budget_usd"] = check_budget(spec.get("budget_usd", 1.0))
+        for k, (lo, hi) in INT_LIMITS.items():
+            if k in spec:
+                v = spec[k]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or int(v) != v:
+                    raise ValueError(f"{k} must be an integer")
+                if not lo <= int(v) <= hi:
+                    raise ValueError(f"{k} must be between {lo} and {hi}")
+                spec[k] = int(v)
+        for k in FLOAT_THRESHOLDS:
+            if k in spec:
+                v = spec[k]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 100:
+                    raise ValueError(f"{k} must be a number between 0 and 100")
+        for k in LIST_FIELDS:
+            if k in spec and (not isinstance(spec[k], list) or len(spec[k]) > LIST_FIELDS[k]):
+                raise ValueError(f"{k} must be a list of at most {LIST_FIELDS[k]} items")
         c = Campaign.from_dict(spec)
         self.storage.save_campaign(tenant, c.to_dict())
         self.storage.ensure_budget(tenant, c.id, c.budget_usd)
@@ -83,15 +109,26 @@ class ChainLead:
 
     def set_budget(self, tenant: str, campaign_id: str, limit_usd: float) -> dict:
         c = self.get_campaign(tenant, campaign_id)
-        c.budget_usd = float(limit_usd)
+        c.budget_usd = check_budget(limit_usd)
         self.storage.save_campaign(tenant, c.to_dict())
         self.storage.ensure_budget(tenant, campaign_id, c.budget_usd)
         return self.storage.budget(tenant, campaign_id)
 
     # ------------------------------------------------------------------ run
-    def run_campaign(self, tenant: str, campaign_id: str) -> dict:
-        t0 = time.time()
+    def run_campaign(self, tenant: str, campaign_id: str, deadline: float | None = None) -> dict:
+        """deadline: optional time.monotonic() value; when reached, no new evidence/on-chain calls are
+        started and the run finishes with what it has (used by the synchronous paid HTTP endpoint)."""
         c = self.get_campaign(tenant, campaign_id)
+        try:
+            return self._run(tenant, c, deadline)
+        except Exception:
+            c.status = "failed"
+            self.storage.save_campaign(tenant, c.to_dict())
+            raise
+
+    def _run(self, tenant: str, c: Campaign, deadline: float | None) -> dict:
+        t0 = time.time()
+        campaign_id = c.id
         cd = c.to_dict()
         c.status = "running"
         self.storage.save_campaign(tenant, c.to_dict())
@@ -99,10 +136,23 @@ class ChainLead:
                                 self.providers + ([self.onchain] if self.onchain else []))
         errors: list[str] = []
 
+        timed_out: list[str] = []
+
+        def out_of_time() -> bool:
+            if deadline is not None and time.monotonic() >= deadline:
+                if not timed_out:
+                    timed_out.append("time budget reached; remaining candidates were scored on the evidence "
+                                     "collected so far")
+                return True
+            return False
+
         def safe_call(provider, op, params, fn, cacheable=True):
             try:
                 return router.call(provider, op, params, fn, cacheable=cacheable)
             except ProviderError as e:
+                errors.append(str(e)[:300])
+                return None
+            except BudgetExceeded as e:     # a paid call outside enrichment must not abort the run
                 errors.append(str(e)[:300])
                 return None
 
@@ -128,6 +178,8 @@ class ChainLead:
         for m in merged:
             parts = []
             for member in m["members"]:
+                if out_of_time():
+                    break
                 for p in router.available("evidence", c.allowed_sources):
                     if not _applies(p.name, member):
                         continue
@@ -151,7 +203,9 @@ class ChainLead:
         if self.onchain and ("rpc" in c.allowed_sources or "mock" in c.allowed_sources):
             for proj, bundle, m in projects:
                 penalty_notes = [n for n in proj.identity_notes if n.startswith("-35")]
-                for ct in proj.contracts:
+                for ct in proj.contracts[:MAX_CONTRACTS_PER_PROJECT]:
+                    if out_of_time():
+                        break
                     if ct.chain_id not in c.target_chains or not self.onchain.supports(ct.chain_id):
                         continue
                     params = {"chain_id": ct.chain_id, "address": ct.address, "fresh": c.freshness_days}
@@ -189,7 +243,7 @@ class ChainLead:
                              key=lambda x: rank_key(x[0]))[: c.max_leads]
         budget_stopped = False
         for i, (lead, bundle, m) in enumerate(enrich_pool):
-            if budget_stopped:
+            if budget_stopped or out_of_time():
                 break
             before = (self.storage.budget(tenant, c.id) or {}).get("spent_usd", 0)
             extra = []
@@ -256,7 +310,8 @@ class ChainLead:
                        "data_confidence": x.data_confidence, "reasons": x.status_reasons} for x in ordered],
             "budget": summary,
             "cost_per_qualified_lead_usd": round(summary["spent_usd"] / len(q), 6) if q else None,
-            "errors": errors, "duration_s": round(time.time() - t0, 2),
+            "errors": errors + timed_out, "duration_s": round(time.time() - t0, 2),
+            "complete": not timed_out,
         }
 
     def _score(self, c: Campaign, proj: Project, bundle: dict, tenant: str) -> Lead:
@@ -292,6 +347,29 @@ class ChainLead:
 
 
 # ---------------------------------------------------------------------- helpers
+SERVER_ASSIGNED = {"id", "tenant", "status", "created_at"}
+INT_LIMITS = {"max_candidates": (1, 200), "max_leads": (1, 100), "freshness_days": (1, 730)}
+FLOAT_THRESHOLDS = ("min_identity_confidence", "min_lead_score", "min_opportunity_score", "min_data_confidence")
+LIST_FIELDS = {"github_queries": 20, "seed_projects": 100, "target_sectors": 30, "target_chains": 10,
+               "allowed_sources": 10}
+MAX_BUDGET_USD = 1_000_000.0
+MAX_CONTRACTS_PER_PROJECT = 10
+
+
+def check_budget(value: Any) -> float:
+    """Budgets must be finite and >= 0. NaN would slip past every `>`/`<` policy check (and is stored as
+    NULL by SQLite), inf would make the cap meaningless."""
+    if isinstance(value, bool):
+        raise ValueError("budget_usd must be a number")
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("budget_usd must be a number")
+    if not math.isfinite(v) or v < 0 or v > MAX_BUDGET_USD:
+        raise ValueError(f"budget_usd must be a finite number between 0 and {MAX_BUDGET_USD:g}")
+    return v
+
+
 def _applies(provider_name: str, member: dict) -> bool:
     if provider_name == "mock":
         return bool(member.get("mock_key"))

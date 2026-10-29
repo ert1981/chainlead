@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -55,7 +56,8 @@ def _write_briefs(engine: ChainLead, tenant: str, report: dict, out: str, lang: 
             continue
         md = engine.brief(tenant, x["lead_id"], "markdown", lang)
         js = engine.brief(tenant, x["lead_id"], "json")
-        stem = f"{x['rank']:02d}-{x['status']}-{js['project']['key']}"
+        safe_key = re.sub(r"[^a-z0-9-]+", "-", str(js["project"]["key"]).lower()).strip("-")[:80] or "project"
+        stem = f"{int(x['rank']):02d}-{x['status']}-{safe_key}"
         (d / f"{stem}.md").write_text(md, encoding="utf-8")
         (d / f"{stem}.json").write_text(json.dumps(js, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"briefs written to {d.resolve()}")

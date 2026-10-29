@@ -5,6 +5,8 @@ seed project, e.g. a protocol's own subgraph, to add activity evidence. Each que
 charged against the campaign budget at the configured per-query estimate."""
 from __future__ import annotations
 
+import re
+
 from .. import http
 from ..config import Settings
 from .base import Provider, empty_bundle
@@ -25,7 +27,11 @@ class TheGraphProvider(Provider):
         return bool(self.settings.graph_api_key)
 
     def query(self, subgraph_id: str, gql: str, variables: dict | None = None) -> dict:
-        if any(w in gql.lower() for w in ("mutation", "subscription")):
+        if not isinstance(subgraph_id, str) or not re.fullmatch(r"[A-Za-z0-9]{20,80}|[A-Za-z0-9_-]{1,80}", subgraph_id):
+            raise ValueError("invalid subgraph id")      # never lets a seed steer the keyed gateway URL
+        if not isinstance(gql, str) or len(gql) > 10_000:
+            raise ValueError("query must be a string of at most 10000 characters")
+        if re.search(r"\b(mutation|subscription)\b", gql, re.I):
             raise ValueError("only read-only GraphQL queries are allowed")
         url = f"{self.gateway}/{self.settings.graph_api_key}/subgraphs/id/{subgraph_id}"
         resp = http.post_json(url, {"query": gql, "variables": variables or {}},

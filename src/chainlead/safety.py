@@ -57,7 +57,14 @@ INJECTION_PATTERNS = [
     r"(send|transfer) (all )?(funds|tokens|eth|usdc)",
 ]
 _INJ = re.compile("|".join(INJECTION_PATTERNS), re.I)
-_CTRL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f​-‏‪-‮⁦-⁩]")
+# Hidden/control characters that are flagged and stripped: C0 controls (except tab/newline/CR), DEL,
+# zero-width space, bidi embeddings/overrides/isolates (Trojan Source), BOM and Unicode TAG characters
+# (U+E0000-E007F, "ASCII smuggling" of invisible instructions to LLMs).
+_CTRL = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b\u202a-\u202e\u2066-\u2069\ufeff"
+                   "\U000e0000-\U000e007f]")
+# ZWNJ/ZWJ/LRM/RLM are normal in Persian/Arabic text and emoji: kept, never flagged, but removed from the
+# copy used for injection matching so "ign\u200core previous instructions" is still detected.
+_SOFT = re.compile("[\u200c\u200d\u200e\u200f\u00ad]")
 
 
 def sanitize_text(text: str | None, max_len: int = 4000) -> tuple[str, list[str]]:
@@ -69,7 +76,7 @@ def sanitize_text(text: str | None, max_len: int = 4000) -> tuple[str, list[str]
     if _CTRL.search(t):
         flags.append("hidden_characters")
         t = _CTRL.sub("", t)
-    if _INJ.search(t):
+    if _INJ.search(_SOFT.sub("", t)):
         flags.append("prompt_injection_suspected")
     if len(t) > max_len:
         t = t[:max_len] + "…"

@@ -86,9 +86,12 @@ class PublicWebProvider(Provider):
     capabilities = frozenset({"evidence"})
     costs = {"evidence": 0.0}
 
-    def __init__(self, settings: Settings, respect_robots: bool = True) -> None:
+    def __init__(self, settings: Settings, respect_robots: bool = True, allow_private_hosts: bool = False) -> None:
         self.settings = settings
         self.respect_robots = respect_robots
+        # SSRF guard: website URLs come from untrusted data (GitHub homepages, campaign seeds), so
+        # private/loopback/link-local/metadata addresses are refused. Only tests enable this flag.
+        self.allow_private_hosts = allow_private_hosts
         self._robots: dict[str, urllib.robotparser.RobotFileParser | None] = {}
 
     def _allowed(self, url: str) -> bool:
@@ -99,8 +102,9 @@ class PublicWebProvider(Provider):
         if base not in self._robots:
             rp = urllib.robotparser.RobotFileParser()
             try:
-                status, _, raw = http.request("GET", base + "/robots.txt", timeout=self.settings.http_timeout,
-                                              retries=0, user_agent=self.settings.user_agent)
+                _, _, raw, _ = http.fetch_untrusted(base + "/robots.txt", timeout=self.settings.http_timeout,
+                                                    user_agent=self.settings.user_agent, max_bytes=200_000,
+                                                    allow_private=self.allow_private_hosts)
                 rp.parse(raw.decode("utf-8", "replace").splitlines())
                 self._robots[base] = rp
             except http.HttpError:
@@ -111,8 +115,9 @@ class PublicWebProvider(Provider):
     def _fetch(self, url: str) -> str | None:
         if not self._allowed(url):
             return None
-        _, headers, raw = http.request("GET", url, timeout=self.settings.http_timeout, retries=1,
-                                       user_agent=self.settings.user_agent)
+        _, headers, raw, _ = http.fetch_untrusted(url, timeout=self.settings.http_timeout,
+                                                  user_agent=self.settings.user_agent,
+                                                  allow_private=self.allow_private_hosts)
         ctype = {k.lower(): v for k, v in headers.items()}.get("content-type", "")
         if "html" not in ctype and "text" not in ctype:
             return None
@@ -123,9 +128,13 @@ class PublicWebProvider(Provider):
         site = candidate.get("website")
         if not site:
             return b
-        if not site.startswith("http"):
+        if not site.startswith(("http://", "https://")):
             site = "https://" + site
-        html = self._fetch(site)
+        try:
+            html = self._fetch(site)
+        except http.BlockedUrl:
+            b["facts"]["site_blocked_ssrf"] = True
+            return b
         if html is None:
             b["facts"]["site_unreachable_or_disallowed"] = True
             return b
@@ -140,7 +149,10 @@ class PublicWebProvider(Provider):
             for href, atext in links:
                 full = urllib.parse.urljoin(site, href)
                 if urllib.parse.urlsplit(full).netloc == host and (rx.search(href) or rx.search(atext)) and full != site:
-                    sub = self._fetch(full)
+                    try:
+                        sub = self._fetch(full)
+                    except http.HttpError:
+                        sub = None
                     if sub:
                         self._extract(full, sub, b, homepage=False)
                     break
@@ -155,12 +167,17 @@ class PublicWebProvider(Provider):
             b["facts"]["site_title"] = sanitize_text(title, 120)[0]
         gh_orgs: list[str] = b["links"].setdefault("site_links_github", [])
         for href, atext in links:
-            full = urllib.parse.urljoin(url, href)
+            full = urllib.parse.urljoin(url, href.strip())
+            if not full.startswith(("http://", "https://", "mailto:")):
+                continue          # javascript:, data:, file: ... are never followed or reported
+            atext = sanitize_text(atext, 200)[0]
             m = re.match(r"https?://(www\.)?github\.com/([A-Za-z0-9-]+)", full)
             if m and m.group(2).lower() not in gh_orgs:
                 gh_orgs.append(m.group(2).lower())
             if full.startswith("mailto:"):
-                addr = full[7:].split("?")[0]
+                addr = urllib.parse.unquote(full[7:].split("?")[0]).strip()
+                if not re.fullmatch(r"[^@\s<>()\[\]]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}", addr):
+                    continue
                 if addr and not any(c["value"] == addr for c in b["contacts"]):
                     b["contacts"].append({"type": "email", "value": addr, "source_url": url})
             for typ, rx in SOCIAL:

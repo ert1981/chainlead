@@ -7,6 +7,7 @@ For each contract that an *official* source tied to a project, it checks:
 Every event keeps chain_id + tx_hash + log_index (+ block number/hash) for reorg handling."""
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 from ..chain.event_decoder import DEPLOYMENT_EVENTS, KNOWN_EVENTS, block_timestamp, decode_log
@@ -26,8 +27,9 @@ class OnChainProvider(Provider):
 
     def __init__(self, settings: Settings, client_factory: Callable[[int], object] | None = None,
                  cost_per_contract: float = 0.0, max_log_requests_per_contract: int = 25,
-                 log_range_override: int | None = None) -> None:
+                 log_range_override: int | None = None, max_events_per_contract: int = 50) -> None:
         self.settings = settings
+        self.max_events = max_events_per_contract   # each event costs one eth_getBlockByNumber
         self.costs = {"onchain": cost_per_contract}
         self.max_requests = max_log_requests_per_contract
         self.log_range_override = log_range_override
@@ -65,7 +67,9 @@ class OnChainProvider(Provider):
         if cli is None:
             return b
         chain = get_chain(chain_id)
-        addr = contract["address"].lower()
+        addr = str(contract["address"]).lower()
+        if not re.fullmatch(r"0x[0-9a-f]{40}", addr):
+            raise ValueError("invalid contract address")
         code = cli.get_code(addr)
         has_code = bool(code) and code not in ("0x", "0x0")
         b["evidence"].append({
@@ -92,6 +96,9 @@ class OnChainProvider(Provider):
             "head": head, "scanned_from": to_block + 1, "requests": requests,
             "complete": to_block < start_floor}
         blocks: dict[int, dict | None] = {}
+        if len(logs) > self.max_events:
+            b["facts"]["events_truncated"] = len(logs) - self.max_events
+            logs = logs[-self.max_events:]          # keep the newest
         for raw in logs:
             ev = decode_log(raw, chain_id)
             if ev is None:

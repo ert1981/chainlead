@@ -11,7 +11,7 @@ import sys
 from typing import Any, TextIO
 
 from . import __version__
-from .engine import ChainLead
+from .engine import ChainLead, check_budget
 from .models import OFFER_CATALOG
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -70,7 +70,8 @@ class McpServer:
         if name == "chainlead_create_campaign":
             spec = dict(args)
             spec.setdefault("budget_usd", min(1.0, self.max_budget))
-            if float(spec["budget_usd"]) > self.max_budget:
+            spec["budget_usd"] = check_budget(spec["budget_usd"])      # rejects NaN/inf/negative
+            if spec["budget_usd"] > self.max_budget:
                 raise PermissionError(f"policy: agents may not set budget above ${self.max_budget:.2f}; ask a human")
             return e.create_campaign(spec, t)
         if name == "chainlead_run_campaign":

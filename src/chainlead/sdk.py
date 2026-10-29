@@ -26,6 +26,8 @@ class ChainLeadError(Exception):
 
 class ChainLeadClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8787", api_key: str | None = None, timeout: float = 120):
+        if not base_url.startswith(("http://", "https://")):
+            raise ValueError("base_url must be http(s)")
         self.base = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
@@ -39,7 +41,7 @@ class ChainLeadClient:
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:  # nosec B310 - http(s) checked in __init__
                 return json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
             try:

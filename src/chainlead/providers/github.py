@@ -16,6 +16,18 @@ API = "https://api.github.com"
 ADDR_RE = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 HIRING_RE = re.compile(r"\b(we'?re hiring|we are hiring|join (our|the) team|open positions|careers)\b", re.I)
 AUDIT_RE = re.compile(r"\baudit(s|ed| report)?\b", re.I)
+# owner/repo names as GitHub allows them; anything else (../, ?, #, %2e ...) is never put into an API path,
+# so a campaign spec cannot steer an authenticated request (GITHUB_TOKEN) to another API endpoint.
+OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
+
+
+def valid_owner(name: str | None) -> bool:
+    return bool(name) and bool(OWNER_RE.match(name))
+
+
+def valid_repo(full: str | None) -> bool:
+    return bool(full) and bool(REPO_RE.match(full)) and full.split("/", 1)[1] not in (".", "..")
 
 
 class GitHubProvider(Provider):
@@ -56,6 +68,8 @@ class GitHubProvider(Provider):
                 if item.get("fork") or item.get("archived"):
                     continue
                 owner = item["owner"]["login"]
+                if not valid_owner(owner) or not valid_repo(item.get("full_name")):
+                    continue
                 c = owners.setdefault(owner.lower(), {
                     "name": owner, "github_org": owner, "repos": [], "website": item.get("homepage") or None,
                     "description": sanitize_text(item.get("description") or "", 300)[0],
@@ -72,23 +86,31 @@ class GitHubProvider(Provider):
     def evidence(self, candidate: dict, campaign: dict) -> dict:
         b = empty_bundle()
         org = candidate.get("github_org")
+        if org and not valid_owner(org):
+            b["facts"]["invalid_github_org"] = True
+            org = None
         if org:
             try:
                 u = self._get(f"/users/{urllib.parse.quote(org)}")
                 prof = f"https://github.com/{org}"
                 if u.get("blog"):
                     b["links"].setdefault("repo_homepages", []).append(u["blog"])
-                if u.get("email"):
-                    b["contacts"].append({"type": "email", "value": u["email"], "source_url": prof})
-                if u.get("twitter_username"):
-                    b["contacts"].append({"type": "x", "value": "@" + u["twitter_username"], "source_url": prof})
+                email = u.get("email")
+                if isinstance(email, str) and re.fullmatch(r"[^@\s<>()]{1,64}@[A-Za-z0-9.-]{1,190}", email):
+                    b["contacts"].append({"type": "email", "value": email, "source_url": prof})
+                tw = u.get("twitter_username")
+                if isinstance(tw, str) and re.fullmatch(r"[A-Za-z0-9_]{1,15}", tw):
+                    b["contacts"].append({"type": "x", "value": "@" + tw, "source_url": prof})
                 b["facts"]["org_type"] = u.get("type")
                 b["facts"]["org_name"] = u.get("name")
             except http.HttpError as e:
                 if e.status in (403, 429):
                     raise
         since = iso(utcnow() - timedelta(days=90))
-        for full in candidate.get("repos", [])[: self.max_repos]:
+        repos = [r for r in candidate.get("repos", []) if valid_repo(r)]
+        if len(repos) != len(candidate.get("repos", [])):
+            b["facts"]["invalid_repo_names_skipped"] = True
+        for full in repos[: self.max_repos]:
             repo = self._get(f"/repos/{full}")
             url = repo["html_url"]
             if repo.get("homepage"):
@@ -101,13 +123,18 @@ class GitHubProvider(Provider):
             b["facts"]["stars"] += int(repo.get("stargazers_count") or 0)
             desc = sanitize_text(repo.get("description") or "", 400)
             b["facts"]["description"] = b["facts"].get("description") or desc[0]
+            if "prompt_injection_suspected" in desc[1]:
+                b["facts"]["flags"] = sorted(set(b["facts"].get("flags", [])) | {"prompt_injection_suspected"})
 
             # releases -------------------------------------------------------
             for rel in (self._get(f"/repos/{full}/releases?per_page=5") or [])[:5]:
                 if rel.get("draft"):
                     continue
                 body, flags = sanitize_text(rel.get("body") or "", 3000)
-                title = rel.get("name") or rel.get("tag_name") or "release"
+                title, tflags = sanitize_text(str(rel.get("name") or rel.get("tag_name") or "release"), 200)
+                flags = sorted(set(flags) | set(tflags))
+                if "prompt_injection_suspected" in flags:   # instructions aimed at agents block auto-qualify
+                    b["facts"]["flags"] = sorted(set(b["facts"].get("flags", [])) | {"prompt_injection_suspected"})
                 b["evidence"].append({
                     "source_type": "github", "url": rel.get("html_url") or url,
                     "claim": f"Release {short(title, 80)} published in {full}",

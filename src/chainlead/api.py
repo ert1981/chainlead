@@ -8,17 +8,44 @@ from __future__ import annotations
 import hmac
 import json
 import re
+import threading
+import time
 import urllib.parse
+from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from . import __version__
-from .engine import ChainLead
+from .engine import ChainLead, check_budget
 from .models import OFFER_CATALOG
 from .safety import SecretMaterialRejected
 from .workers import JobRunner
 
 MAX_BODY = 1_000_000
+SOCKET_TIMEOUT = 30          # seconds a client may take to send its request (slowloris guard)
+
+
+class RateLimiter:
+    """Sliding one-minute window per key (tenant or client IP). In-memory, per process."""
+
+    def __init__(self, per_minute: int) -> None:
+        self.per_minute = max(1, int(per_minute))
+        self.hits: dict[str, deque] = defaultdict(deque)
+        self.lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        with self.lock:
+            q = self.hits[key]
+            while q and now - q[0] > 60:
+                q.popleft()
+            if len(q) >= self.per_minute:
+                return False
+            q.append(now)
+            if len(self.hits) > 10_000:
+                for k in [k for k, v in self.hits.items() if not v or now - v[-1] > 60]:
+                    self.hits.pop(k, None)
+            return True
 
 
 class ApiError(Exception):
@@ -27,7 +54,10 @@ class ApiError(Exception):
         self.status = status
 
 
-def make_handler(engine: ChainLead, jobs: JobRunner):
+def make_handler(engine: ChainLead, jobs: JobRunner, rate_limit_per_minute: int | None = None):
+    import os
+    limiter = RateLimiter(rate_limit_per_minute or int(os.environ.get("CHAINLEAD_RATE_LIMIT_PER_MIN", "120")))
+    run_limiter = RateLimiter(int(os.environ.get("CHAINLEAD_RUN_LIMIT_PER_MIN", "10")))
     routes: list[tuple[str, re.Pattern, Any]] = []
 
     def route(method: str, pattern: str):
@@ -63,6 +93,8 @@ def make_handler(engine: ChainLead, jobs: JobRunner):
 
     @route("POST", r"/campaigns/(?P<cid>[\w-]+)/run")
     def run(tenant, body, q, cid):
+        if not run_limiter.allow(tenant):
+            raise ApiError(429, "too many campaign runs; try again in a minute")
         if q.get("async", ["false"])[0].lower() in ("1", "true", "yes"):
             return 202, jobs.submit(tenant, cid)
         return 200, engine.run_campaign(tenant, cid)
@@ -91,12 +123,12 @@ def make_handler(engine: ChainLead, jobs: JobRunner):
 
     @route("PUT", r"/campaigns/(?P<cid>[\w-]+)/budget")
     def put_budget(tenant, body, q, cid):
-        try:
-            limit = float(body["limit_usd"])
-        except (KeyError, TypeError, ValueError):
+        if not isinstance(body, dict) or "limit_usd" not in body:
             raise ApiError(400, "body must be {\"limit_usd\": number}")
-        if limit < 0:
-            raise ApiError(400, "limit_usd must be >= 0")
+        try:
+            limit = check_budget(body["limit_usd"])           # finite, >= 0
+        except ValueError as e:
+            raise ApiError(400, str(e))
         return 200, engine.set_budget(tenant, cid, limit)
 
     @route("GET", r"/campaigns/(?P<cid>[\w-]+)/calls")
@@ -119,6 +151,7 @@ def make_handler(engine: ChainLead, jobs: JobRunner):
 
     class Handler(BaseHTTPRequestHandler):
         server_version = f"ChainLead/{__version__}"
+        timeout = SOCKET_TIMEOUT
 
         def log_message(self, fmt, *args):   # quiet by default
             pass
@@ -149,14 +182,19 @@ def make_handler(engine: ChainLead, jobs: JobRunner):
                 path = parsed.path.rstrip("/") or "/"
                 q = urllib.parse.parse_qs(parsed.query)
                 tenant = "public" if path == "/health" else self._tenant()
+                if not limiter.allow(f"t:{tenant}" if tenant not in ("public", "local") else f"ip:{self.client_address[0]}"):
+                    raise ApiError(429, "rate limit exceeded")
                 body: Any = None
-                n = int(self.headers.get("Content-Length") or 0)
+                raw_len = (self.headers.get("Content-Length") or "0").strip()
+                if not raw_len.isdigit():               # negative or junk -> read(-1) would block the thread
+                    raise ApiError(400, "invalid Content-Length")
+                n = int(raw_len)
                 if n > MAX_BODY:
                     raise ApiError(413, "request body too large")
                 if n:
                     try:
-                        body = json.loads(self.rfile.read(n).decode("utf-8"))
-                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        body = json.loads(self.rfile.read(n).decode("utf-8"), parse_constant=_reject_constant)
+                    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                         raise ApiError(400, "invalid JSON body")
                 for m, rx, fn in routes:
                     mt = rx.match(path)
@@ -187,6 +225,10 @@ def make_handler(engine: ChainLead, jobs: JobRunner):
             self._handle("PUT")
 
     return Handler
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"{name} is not valid JSON")
 
 
 def create_server(engine: ChainLead, host: str = "127.0.0.1", port: int = 8787) -> ThreadingHTTPServer:

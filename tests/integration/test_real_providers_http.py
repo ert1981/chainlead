@@ -95,7 +95,7 @@ def test_full_campaign_with_real_providers(fake_http):
     s = Settings(db_path=":memory:", rpc_urls={8453: fake_http.url + "/rpc"}, explorer_api_key="k",
                  api_keys={}, github_token="ghp_test")
     eng = ChainLead(Storage(":memory:"), s,
-                    [GitHubProvider(s, api_base=fake_http.url), PublicWebProvider(s),
+                    [GitHubProvider(s, api_base=fake_http.url), PublicWebProvider(s, allow_private_hosts=True),
                      BlockExplorerProvider(s, api_url=fake_http.url + "/v2/api", cost_per_call=0.001)],
                     OnChainProvider(s, log_range_override=500_000))
     c = eng.create_campaign({"name": "live-ish", "offer": "bridge_dev", "github_queries": ["topic:bridge"],
