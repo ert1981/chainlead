@@ -178,3 +178,17 @@ def test_decision_rule_high_score_is_not_enough():
     assert decide(p, hi, hi, 95, [sig], [ev], [], c)[0] == "review"                      # no contact path
     lo = ScoreBreakdown(10, {"C": 0}, {})
     assert decide(p, lo, lo, 95, [sig], [ev], [], c)[0] == "rejected"
+
+
+def test_uncertain_identity_with_failing_scores_is_rejected_not_reviewed():
+    from chainlead.models import Campaign, Project, ScoreBreakdown, resolve_offer
+    from chainlead.scoring import decide
+    c = Campaign(name="t", offer=resolve_offer("bridge_dev"))
+    p = Project(name="weak", identity_confidence=15)
+    low = ScoreBreakdown(20.0, {"C": 0}, {})
+    status, reasons = decide(p, low, ScoreBreakdown(0.0, {}, {}), 30, [], [], [], c)
+    assert status == "rejected" and any("uncertain_identity" in r for r in reasons)
+    status, _ = decide(p, low, ScoreBreakdown(80.0, {}, {}), 30, [], [], [], c)
+    assert status == "review"
+    status, _ = decide(p, low, ScoreBreakdown(0.0, {}, {}), 30, [], [], ["prompt_injection_suspected"], c)
+    assert status == "review"

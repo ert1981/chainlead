@@ -113,9 +113,15 @@ def data_confidence(p: Project, signals: list[Signal], flags: list[str]) -> floa
 def decide(p: Project, L: ScoreBreakdown, O: ScoreBreakdown, conf: float, signals: list[Signal],
            evidence: list[Evidence], flags: list[str], c: Campaign) -> tuple[str, list[str]]:
     reasons: list[str] = []
-    if p.identity_confidence < c.min_identity_confidence:
-        return "review", [f"uncertain_identity ({p.identity_confidence:.0f} < {c.min_identity_confidence:.0f})"]
     blocking = sorted(set(flags) & BLOCKING_FLAGS)
+    if p.identity_confidence < c.min_identity_confidence:
+        # Uncertain identity only deserves human review when the lead is promising on at least one score;
+        # a project that fails BOTH thresholds is rejected instead of flooding the review queue.
+        if not blocking and L.total < c.min_lead_score and O.total < c.min_opportunity_score:
+            return "rejected", [f"lead score {L.total} < {c.min_lead_score}",
+                                f"opportunity score {O.total} < {c.min_opportunity_score}",
+                                f"uncertain_identity ({p.identity_confidence:.0f} < {c.min_identity_confidence:.0f})"]
+        return "review", [f"uncertain_identity ({p.identity_confidence:.0f} < {c.min_identity_confidence:.0f})"]
     if blocking:
         return "review", [f"untrusted content flagged: {', '.join(blocking)} — scores may be manipulated"]
     if L.total < c.min_lead_score:
