@@ -437,3 +437,20 @@ def test_discover_runs_the_real_pipeline_offline_and_forgets_the_request(fake_ht
     assert lead["status"] in ("qualified", "review") and "markdown" in lead and lead["signals"]
     assert out["content_notice"].startswith("Project names")
     assert eng.storage.list_campaigns("tool") == []          # request-specific rows purged
+
+
+def test_bridgepilot_style_env_aliases(monkeypatch):
+    from chainlead.tool.config import ToolSettings
+    for k in ("CHAINLEAD_PUBLIC_BASE_URL", "CHAINLEAD_PAYEE_ADDRESS", "CHAINLEAD_CREATOR_ADDRESS", "CHAINLEAD_PRICE_USDC"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://chainlead.onrender.com/")
+    monkeypatch.setenv("X402_PAY_TO", "0x93714D5970f511Ac22f0E5635D3fBF538f717cd4")
+    monkeypatch.setenv("TOOL_CREATOR_ADDRESS", "0x93714D5970f511Ac22f0E5635D3fBF538f717cd4")
+    monkeypatch.setenv("X402_MODE", "facilitator")
+    monkeypatch.setenv("X402_PRICE_ATOMIC", "500000")
+    s = ToolSettings()
+    assert s.public_base_url == "https://chainlead.onrender.com"
+    assert s.price_usdc == "0.5" and s.paid_enabled and s.manifest_problem() is None
+    assert s.x402().requirements("https://x/v1", "d")["maxAmountRequired"] == "500000"
+    monkeypatch.setenv("X402_MODE", "off")
+    assert not ToolSettings().paid_enabled

@@ -10,8 +10,6 @@ USER chainlead
 # Public, non-secret defaults. Secrets (GITHUB_TOKEN, EXPLORER_API_KEY) come from the host environment only.
 ENV CHAINLEAD_DB=/data/chainlead.db \
     CHAINLEAD_RPC_8453=https://base-rpc.publicnode.com \
-    CHAINLEAD_X402_NETWORK=base \
-    CHAINLEAD_PRICE_USDC=0.50 \
     PORT=8000
 EXPOSE 8000
 # Render injects PORT. The REST API with tenant keys is `chainlead serve` (see compose.yaml).

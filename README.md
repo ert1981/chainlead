@@ -163,9 +163,10 @@ CHAINLEAD_LIVE=1 pytest -m live  # تست دود روی GitHub واقعی (نی�
 متغیرها (همه عمومی‌اند؛ برای دریافت پول هیچ کلید خصوصی لازم نیست):
 
 ```
-CHAINLEAD_PUBLIC_BASE_URL=https://<service>.onrender.com   # الزامی برای مانیفست
-CHAINLEAD_PAYEE_ADDRESS=0x...                               # گیرنده USDC
-CHAINLEAD_CREATOR_ADDRESS=0x...                             # امضاکننده ثبت
+PUBLIC_BASE_URL=https://<service>.onrender.com   # الزامی برای مانیفست
+X402_MODE=facilitator                           # PayAI؛ off = غیرفعال (503)
+X402_PAY_TO=0x...                               # گیرنده USDC
+TOOL_CREATOR_ADDRESS=0x...                      # امضاکننده ثبت
 CHAINLEAD_PRICE_USDC=0.50
 GITHUB_TOKEN=...                                            # توکن بدون scope؛ عملاً لازم (بدون آن ۶۰ درخواست در ساعت)
 ```
