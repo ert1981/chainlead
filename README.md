@@ -121,6 +121,9 @@ for lead in cl.leads(c["id"], "qualified"):
 - متن‌های وب، README و نسخه‌ها «داده» هستند: پاک‌سازی کاراکترهای پنهان، محدودیت طول، تشخیص Prompt Injection. پروژه پرچم‌خورده هرگز خودکار واجد شرایط نمی‌شود و هزینه پولی برایش خرج نمی‌شود.
 - مقاومت در برابر دست‌کاری امتیاز: سقف ۳ سیگنال از هر نوع، تشخیص انتشار انبوه (signal flood)، کیفیت پایین برای ادعاهای تأییدنشده شخص ثالث.
 - جداسازی کامل tenantها در همه جداول؛ مقایسه کلید API در زمان ثابت؛ سقف اندازه درخواست.
+- محافظ SSRF برای وب‌سایت‌های نامطمئن: فقط IP عمومی، اتصال به همان IP بررسی‌شده (ضد DNS rebinding)، بررسی دوباره هر redirect، فقط پورت 80/443، سقف حجم و زمان.
+- محدودیت نرخ REST برای هر tenant/IP و timeout سوکت؛ بودجه فقط عدد متناهی بین ۰ و ۱٬۰۰۰٬۰۰۰ دلار.
+- جزئیات: [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
 
 ## هزینه
 
@@ -133,16 +136,47 @@ for lead in cl.leads(c["id"], "qualified"):
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                        # 63 تست: unit, integration, security, e2e
+pytest -q                        # ۲۱۴ تست: unit, integration, security, e2e, tool
 CHAINLEAD_LIVE=1 pytest -m live  # تست دود روی GitHub واقعی (نیاز به اینترنت)
 ```
 
 ارائه‌دهندگان واقعی (GitHub، وب‌سایت، JSON-RPC، Explorer، The Graph) در تست‌ها با سرورهای HTTP محلی که پاسخ‌های واقعی را شبیه‌سازی می‌کنند آزموده می‌شوند.
 
+## ابزار پولی برای ایجنت‌ها (OpenSea Tools / ERC-8257 / x402)
+
+`chainlead tool-serve` یک endpoint پولی و هم‌زمان (synchronous) می‌سازد که ایجنت‌های دیگر با USDC روی Base برایش پول می‌دهند:
+
+| مسیر | توضیح |
+|---|---|
+| `POST /v1/leads/discover` | کشف و امتیازدهی لید (پولی، x402 v1 + v2، متادیتای Bazaar) |
+| `GET/HEAD /v1/leads/discover` یا POST خالی | پاسخ فوری 402 با شرایط پرداخت |
+| `/.well-known/ai-tool/chainlead-web3-lead-discovery.json` | مانیفست ERC-8257 |
+| `/static/icon.png` | آیکون |
+| `/register-onchain` | صفحه ثبت در ToolRegistry روی Base با امضای خود سازنده (با بررسی تکراری) |
+| `/health` | وضعیت |
+
+- ترتیب پرداخت: اعتبارسنجی ورودی (422) ← verify ← رزرو replay ← اجرا ← settle. نتیجه فقط بعد از settle موفق برگردانده می‌شود. اگر هیچ کاندیدی پیدا نشود هزینه‌ای گرفته نمی‌شود.
+- سقف‌ها: حداکثر ۸ کاندید، ۵ لید، ۳ جستجوی GitHub، بودجه زمانی ۳۵ ثانیه، ۲ اجرای هم‌زمان (بیشتر = 503 قبل از پرداخت)، ۶۰ درخواست در دقیقه برای هر IP.
+- فقط منابع رایگان (GitHub، وب‌سایت رسمی، RPC عمومی Base)؛ هزینه داده صفر. داده کمپین بعد از هر فراخوانی پاک می‌شود.
+- قیمت پیشنهادی: `0.50` USDC برای هر فراخوانی (`CHAINLEAD_PRICE_USDC`). تغییر قیمت یا URL، hash مانیفست را عوض می‌کند.
+
+متغیرها (همه عمومی‌اند؛ برای دریافت پول هیچ کلید خصوصی لازم نیست):
+
+```
+CHAINLEAD_PUBLIC_BASE_URL=https://<service>.onrender.com   # الزامی برای مانیفست
+CHAINLEAD_PAYEE_ADDRESS=0x...                               # گیرنده USDC
+CHAINLEAD_CREATOR_ADDRESS=0x...                             # امضاکننده ثبت
+CHAINLEAD_PRICE_USDC=0.50
+GITHUB_TOKEN=...                                            # توکن بدون scope؛ عملاً لازم (بدون آن ۶۰ درخواست در ساعت)
+```
+
+استقرار روی Render (رایگان): `render.yaml` و `Dockerfile` آماده‌اند. سرویس رایگان بعد از بیکاری می‌خوابد؛ قبل از `tool-sdk verify` یا ثبت، یک بار `/health` را صدا بزن تا بیدار شود.
+
 ## Docker
 
 ```bash
-docker compose up --build        # API روی :8787 ، داده در volume
+docker build -t chainlead . && docker run -p 8000:8000 --env-file .env chainlead   # ابزار پولی x402
+docker compose up --build        # REST API روی :8787 ، داده در volume
 ```
 
 ## محدودیت‌های نسخه اول

@@ -3,6 +3,7 @@ the payee is a public address, and the facilitator (PayAI) needs no key."""
 from __future__ import annotations
 
 import os
+import tempfile
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
@@ -40,7 +41,7 @@ class ToolSettings:
     max_concurrent: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_MAX_CONCURRENT", 2, 1, 8))
     probe_rate_per_min: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_RATE_PER_MIN", 60, 1, 10_000))
     registry_rpc_url: str = field(default_factory=lambda: _env("CHAINLEAD_RPC_8453", DEFAULT_BASE_RPC))
-    db_path: str = field(default_factory=lambda: _env("CHAINLEAD_DB", "/tmp/chainlead-tool.db"))
+    db_path: str = field(default_factory=lambda: _env("CHAINLEAD_DB", os.path.join(tempfile.gettempdir(), "chainlead-tool.db")))
 
     @property
     def paid_enabled(self) -> bool:

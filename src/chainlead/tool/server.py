@@ -222,7 +222,8 @@ class ToolApp:
         return f"{self.settings.public_base_url or ''}{path}"
 
     def payment_required(self, error: str, host_base: str) -> tuple[int, dict, dict]:
-        assert self.x402
+        if self.x402 is None:
+            raise RuntimeError("payments are not configured")
         reqs = self.x402.requirements(self.resource_url(mf.TOOL_PATH) if self.settings.public_base_url
                                       else host_base + mf.TOOL_PATH,
                                       f"{DESCRIPTION_402} ({self.settings.price_usdc} USDC)")
@@ -239,7 +240,8 @@ class ToolApp:
     def charge(self, header: str, version: int, req: dict, host_base: str) -> tuple[int, dict, dict]:
         """verify -> replay reservation -> produce -> settle."""
         x = self.x402
-        assert x
+        if x is None:
+            raise RuntimeError("payments are not configured")
         requirements = x.requirements(self.resource_url(mf.TOOL_PATH) if self.settings.public_base_url
                                       else host_base + mf.TOOL_PATH,
                                       f"{DESCRIPTION_402} ({self.settings.price_usdc} USDC)")
