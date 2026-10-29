@@ -239,3 +239,18 @@ class Storage:
     def cache_put(self, key: str, provider: str, body: Any) -> None:
         self._exec("INSERT OR REPLACE INTO cache VALUES (?,?,?,?)",
                    (key, provider, json.dumps(body, default=str), time.time()))
+
+    def purge_campaign(self, tenant: str, campaign_id: str) -> None:
+        """Forget a campaign's request-specific rows (spec, leads, signals, budget, call ledger). Public
+        source data (projects, evidence, chain events, response cache) is kept for reuse."""
+        with self._lock:
+            for table, col in (("campaigns", "id"), ("lead_scores", "campaign_id"),
+                               ("opportunity_signals", "campaign_id"), ("budgets", "campaign_id"),
+                               ("provider_calls", "campaign_id")):
+                # table/column names come from the constant tuple above, never from input
+                self.conn.execute(f"DELETE FROM {table} WHERE tenant=? AND {col}=?",  # nosec B608
+                                  (tenant, campaign_id))
+            self.conn.commit()
+
+    def prune_cache(self, max_age_s: int) -> None:
+        self._exec("DELETE FROM cache WHERE created_at < ?", (time.time() - max_age_s,))

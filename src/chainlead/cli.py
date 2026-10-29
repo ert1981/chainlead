@@ -85,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8787)))
     s.add_argument("--mock", action="store_true")
 
+    t = sub.add_parser("tool-serve", help="paid x402 endpoint for agents (OpenSea Tools / ERC-8257)")
+    t.add_argument("--host", default="0.0.0.0")  # nosec B104 - container entrypoint
+    t.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
+
     m = sub.add_parser("mcp", help="MCP server over stdio")
     m.add_argument("--mock", action="store_true")
     m.add_argument("--tenant", default="local")
@@ -130,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "serve":
         from .api import serve
         serve(_engine(a, mock=a.mock), a.host, a.port)
+        return 0
+    if a.cmd == "tool-serve":
+        from .tool.server import serve as tool_serve
+        tool_serve(a.host, a.port)
         return 0
     if a.cmd == "mcp":
         from .mcp_server import McpServer
