@@ -35,7 +35,7 @@ class ToolSettings:
     facilitator_url: str = field(default_factory=lambda: _env("CHAINLEAD_FACILITATOR_URL",
                                                               payments.PAYAI_FACILITATOR_URL))
     # Synchronous run limits (fit Render free and OpenSea review: one call answers well under a minute).
-    time_budget_s: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_TIME_BUDGET_S", 40, 5, 110))
+    time_budget_s: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_TIME_BUDGET_S", 35, 5, 110))
     max_candidates: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_MAX_CANDIDATES", 8, 1, 20))
     max_concurrent: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_MAX_CONCURRENT", 2, 1, 8))
     probe_rate_per_min: int = field(default_factory=lambda: _int("CHAINLEAD_TOOL_RATE_PER_MIN", 60, 1, 10_000))
