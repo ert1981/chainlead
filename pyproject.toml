@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chainlead"
+version = "0.1.0"
+description = "ChainLead Agent: evidence-based Web3 lead & opportunity discovery engine for AI agents (REST, MCP, Python SDK)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []   # core runs on the Python standard library only
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6"]
+dev = ["pytest>=7", "pycryptodome>=3.18"]
+
+[project.scripts]
+chainlead = "chainlead.cli:entry"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chainlead = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: hits real public APIs (skipped unless CHAINLEAD_LIVE=1)"]

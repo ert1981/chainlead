@@ -1,0 +1,12 @@
+{
+  "name": "base-bridge-q4",
+  "offer": "bridge_dev",
+  "target_sectors": ["defi", "infrastructure", "bridge"],
+  "target_chains": [8453],
+  "allowed_sources": ["github", "public_web", "rpc", "explorer"],
+  "github_queries": ["topic:cross-chain solidity", "base bridge in:readme"],
+  "max_candidates": 20,
+  "max_leads": 10,
+  "budget_usd": 0.50,
+  "freshness_days": 90
+}

@@ -1,0 +1,231 @@
+{
+  "lead_id": "lead_db8d30ec5ee33c2d",
+  "campaign_id": "cmp_6cfdae00d1e8",
+  "generated_at": "2026-10-29T19:00:16+00:00",
+  "project": {
+    "key": "lumen-bridge",
+    "name": "Lumen Bridge",
+    "website": "https://lumenbridge.example",
+    "github_org": "lumen-bridge",
+    "repos": [
+      "lumen-bridge/lumen-core"
+    ],
+    "chains": [
+      1,
+      8453
+    ],
+    "sectors": [
+      "bridge",
+      "infrastructure"
+    ],
+    "contracts": [
+      {
+        "chain_id": 8453,
+        "address": "0x1111111111111111111111111111111111110001",
+        "label": "MessageRouter (Base)",
+        "linked_by": "https://github.com/lumen-bridge/lumen-core#readme"
+      },
+      {
+        "chain_id": 1,
+        "address": "0x1111111111111111111111111111111111110002",
+        "label": "MessageRouter (Ethereum)",
+        "linked_by": "https://github.com/lumen-bridge/lumen-core#readme"
+      }
+    ]
+  },
+  "status": "qualified",
+  "status_reasons": [
+    "meets lead, opportunity, identity and data-confidence thresholds"
+  ],
+  "rank": 1,
+  "opportunity": {
+    "type": "new_chain",
+    "title_en": "Multi-chain expansion",
+    "title_fa": "توسعه چندزنجیره‌ای",
+    "offer": "Cross-chain / bridge integration"
+  },
+  "scores": {
+    "lead": {
+      "total": 85.3,
+      "F": 100.0,
+      "B": 65.0,
+      "C": 80.0,
+      "D": 96.1,
+      "R": 86.5
+    },
+    "opportunity": {
+      "total": 95.2,
+      "N": 99.2,
+      "T": 90.0,
+      "E": 95.0,
+      "Q": 95.0
+    },
+    "data_confidence": 97.4,
+    "identity_confidence": 100.0,
+    "lead_reasons": [
+      "F: sectors ['infrastructure'], target chains [8453], 3 offer keywords in description/topics",
+      "B: hiring signal",
+      "C: 2 official contact channels, 1 named people from official pages"
+    ],
+    "weights": {
+      "lead": {
+        "F": 0.3,
+        "B": 0.25,
+        "C": 0.2,
+        "D": 0.15,
+        "R": 0.1
+      },
+      "opportunity": {
+        "N": 0.35,
+        "T": 0.25,
+        "E": 0.2,
+        "Q": 0.2
+      }
+    }
+  },
+  "identity_notes": [
+    "+15 official website known",
+    "+15 GitHub organisation known",
+    "+30 website links to the GitHub organisation (site → GitHub)",
+    "+20 GitHub repo/org points back to the website (GitHub → site)",
+    "+10 contract addresses published by an official source",
+    "+5 linked contract has bytecode on-chain",
+    "+5 project discovered by more than one source"
+  ],
+  "signals": [
+    {
+      "type": "new_chain",
+      "observation": "First initialisation of a project contract on Base (project already present on Ethereum)",
+      "inference": "The project is expanding to another network, which may require integration or multi-chain work.",
+      "inference_fa": "پروژه در حال گسترش به شبکه‌ای دیگر است که ممکن است به یکپارچه‌سازی یا کار چندزنجیره‌ای نیاز داشته باشد.",
+      "strength": 85,
+      "quality": 95,
+      "occurred_at": "2026-10-17T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "evm://8453/tx/0xf8752abefa1f43c4fc990e746662c1636118eaaf6d27b759d136c762117dcbc8#log0",
+          "source_type": "rpc",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": false,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "new_chain",
+      "observation": "Release notes mention support for Base: Release v2.0.0 published in lumen-bridge/lumen-core",
+      "inference": "The project is expanding to another network, which may require integration or multi-chain work.",
+      "inference_fa": "پروژه در حال گسترش به شبکه‌ای دیگر است که ممکن است به یکپارچه‌سازی یا کار چندزنجیره‌ای نیاز داشته باشد.",
+      "strength": 75,
+      "quality": 95,
+      "occurred_at": "2026-10-19T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://github.com/lumen-bridge/lumen-core/releases/tag/v2.0.0",
+          "source_type": "github",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "contract_deploy",
+      "observation": "Initialized event on Base contract 0x1111111111111111111111111111111111110001 at block 29481600 (finalized)",
+      "inference": "Deployed contracts changed recently (new deployment or upgrade); this may create review, monitoring or engineering needs.",
+      "inference_fa": "قراردادهای مستقر اخیراً تغییر کرده‌اند (استقرار یا ارتقای جدید)؛ این ممکن است نیاز به بازبینی، پایش یا مهندسی ایجاد کند.",
+      "strength": 85,
+      "quality": 95,
+      "occurred_at": "2026-10-17T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "evm://8453/tx/0xf8752abefa1f43c4fc990e746662c1636118eaaf6d27b759d136c762117dcbc8#log0",
+          "source_type": "rpc",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": false,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "hiring",
+      "observation": "Open role listed: Senior Solidity Engineer",
+      "inference": "The team is hiring for this skill, which may indicate capacity they could also source externally.",
+      "inference_fa": "تیم برای این مهارت نیرو استخدام می‌کند؛ ممکن است بخشی از این ظرفیت را از بیرون هم تأمین کند.",
+      "strength": 65,
+      "quality": 90,
+      "occurred_at": "2026-10-23T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://lumenbridge.example/careers",
+          "source_type": "website",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "release",
+      "observation": "Release v2.0.0 published in lumen-bridge/lumen-core",
+      "inference": "The team is actively shipping; new versions often bring integration, tooling or review needs.",
+      "inference_fa": "تیم به‌طور فعال نسخه منتشر می‌کند؛ نسخه‌های جدید اغلب نیاز به یکپارچه‌سازی، ابزار یا بازبینی ایجاد می‌کنند.",
+      "strength": 70,
+      "quality": 95,
+      "occurred_at": "2026-10-19T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://github.com/lumen-bridge/lumen-core/releases/tag/v2.0.0",
+          "source_type": "github",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "dev_activity",
+      "observation": "100+ commits by 9 authors in lumen-bridge/lumen-core during the last 90 days",
+      "inference": "Sustained development activity indicates an active engineering team.",
+      "inference_fa": "فعالیت توسعه‌ای پیوسته نشان‌دهنده تیم مهندسی فعال است.",
+      "strength": 73.33333333333334,
+      "quality": 95,
+      "occurred_at": "2026-10-28T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://github.com/lumen-bridge/lumen-core/commits",
+          "source_type": "github",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    }
+  ],
+  "contacts": [
+    {
+      "type": "email",
+      "value": "partners@lumenbridge.example",
+      "source_url": "https://lumenbridge.example",
+      "official": true
+    },
+    {
+      "type": "discord",
+      "value": "https://discord.gg/lumenbridge-example",
+      "source_url": "https://lumenbridge.example",
+      "official": true
+    }
+  ],
+  "people": [
+    {
+      "name": "Ava Rahimi",
+      "role": "CTO",
+      "source_url": "https://lumenbridge.example/team"
+    }
+  ],
+  "evidence_count": 7,
+  "suggested_action": "Read the official sources below, then contact Ava Rahimi (CTO) via email: partners@lumenbridge.example with a specific 'Cross-chain / bridge integration' proposal tied to the top signal.",
+  "suggested_action_fa": "ابتدا منابع رسمی زیر را بررسی کن، سپس از طریق email: partners@lumenbridge.example با Ava Rahimi (CTO) تماس بگیر و پیشنهادی مشخص درباره «Cross-chain / bridge integration» مرتبط با مهم‌ترین نشانه ارائه کن.",
+  "cost_usd": 0.005,
+  "caveat": "Signals indicate a *possible* need. They are not proof of budget or purchase intent. Verify the sources before any outreach; do not mass-contact founders."
+}

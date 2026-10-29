@@ -1,0 +1,147 @@
+{
+  "campaign_id": "cmp_6cfdae00d1e8",
+  "status": "completed",
+  "offer": "Cross-chain / bridge integration",
+  "candidates_found": 10,
+  "projects_after_dedup": 9,
+  "qualified": 3,
+  "review": 3,
+  "rejected": 3,
+  "leads": [
+    {
+      "lead_id": "lead_db8d30ec5ee33c2d",
+      "project": "Lumen Bridge",
+      "status": "qualified",
+      "rank": 1,
+      "lead_score": 85.3,
+      "opportunity_score": 95.2,
+      "data_confidence": 97.4,
+      "reasons": [
+        "meets lead, opportunity, identity and data-confidence thresholds"
+      ]
+    },
+    {
+      "lead_id": "lead_cafc39910edd4a22",
+      "project": "Quartz Lending",
+      "status": "qualified",
+      "rank": 2,
+      "lead_score": 81.9,
+      "opportunity_score": 88.9,
+      "data_confidence": 94.1,
+      "reasons": [
+        "meets lead, opportunity, identity and data-confidence thresholds"
+      ]
+    },
+    {
+      "lead_id": "lead_6c8f12a9c384b346",
+      "project": "Pylon Restaking",
+      "status": "qualified",
+      "rank": 3,
+      "lead_score": 71.5,
+      "opportunity_score": 94.4,
+      "data_confidence": 88.6,
+      "reasons": [
+        "meets lead, opportunity, identity and data-confidence thresholds"
+      ]
+    },
+    {
+      "lead_id": "lead_e15ea61dd2e1db2f",
+      "project": "Helix Analytics",
+      "status": "review",
+      "rank": 4,
+      "lead_score": 51.8,
+      "opportunity_score": 87.3,
+      "data_confidence": 89.9,
+      "reasons": [
+        "strong opportunity but no verified contact path (lead score 51.8)"
+      ]
+    },
+    {
+      "lead_id": "lead_21a026aa661634de",
+      "project": "MoonPump",
+      "status": "review",
+      "rank": 5,
+      "lead_score": 55.5,
+      "opportunity_score": 76.8,
+      "data_confidence": 28.8,
+      "reasons": [
+        "untrusted content flagged: prompt_injection_suspected, signal_flood — scores may be manipulated"
+      ]
+    },
+    {
+      "lead_id": "lead_2e1fd2a3e55ac1d3",
+      "project": "Apex Yield",
+      "status": "review",
+      "rank": 6,
+      "lead_score": 51.7,
+      "opportunity_score": 73.7,
+      "data_confidence": 56.5,
+      "reasons": [
+        "uncertain_identity (25 < 60)"
+      ]
+    },
+    {
+      "lead_id": "lead_372448bffe97e293",
+      "project": "Kestrel NFT Studio",
+      "status": "rejected",
+      "rank": 7,
+      "lead_score": 40.2,
+      "opportunity_score": 72.3,
+      "data_confidence": 86.8,
+      "reasons": [
+        "lead score 40.2 < 55"
+      ]
+    },
+    {
+      "lead_id": "lead_c56dc755d62768b0",
+      "project": "Tern Finance",
+      "status": "rejected",
+      "rank": 8,
+      "lead_score": 52.2,
+      "opportunity_score": 0.0,
+      "data_confidence": 65.8,
+      "reasons": [
+        "lead score 52.2 < 55",
+        "opportunity score 0.0 < 50"
+      ]
+    },
+    {
+      "lead_id": "lead_9c904a41d1e6cefa",
+      "project": "Nimbus Oracle",
+      "status": "rejected",
+      "rank": 9,
+      "lead_score": 39.8,
+      "opportunity_score": 0.0,
+      "data_confidence": 57.5,
+      "reasons": [
+        "lead score 39.8 < 55",
+        "opportunity score 0.0 < 50"
+      ]
+    }
+  ],
+  "budget": {
+    "limit_usd": 0.1,
+    "spent_usd": 0.06,
+    "remaining_usd": 0.04,
+    "by_provider": {
+      "mock": {
+        "calls": 17,
+        "cached": 0,
+        "errors": 0,
+        "skipped_budget": 0,
+        "cost_usd": 0.06
+      },
+      "rpc": {
+        "calls": 6,
+        "cached": 0,
+        "errors": 0,
+        "skipped_budget": 0,
+        "cost_usd": 0.0
+      }
+    },
+    "total_calls": 23
+  },
+  "cost_per_qualified_lead_usd": 0.02,
+  "errors": [],
+  "duration_s": 0.02
+}

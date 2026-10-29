@@ -1,0 +1,175 @@
+{
+  "lead_id": "lead_21a026aa661634de",
+  "campaign_id": "cmp_6cfdae00d1e8",
+  "generated_at": "2026-10-29T19:00:16+00:00",
+  "project": {
+    "key": "moonpump-xyz",
+    "name": "MoonPump",
+    "website": "https://moonpump.example",
+    "github_org": "moonpump-xyz",
+    "repos": [
+      "moonpump-xyz/moonpump"
+    ],
+    "chains": [
+      8453
+    ],
+    "sectors": [
+      "defi"
+    ],
+    "contracts": [
+      {
+        "chain_id": 8453,
+        "address": "0x6666666666666666666666666666666666660001",
+        "label": "Token",
+        "linked_by": "https://github.com/moonpump-xyz/moonpump#readme"
+      }
+    ]
+  },
+  "status": "review",
+  "status_reasons": [
+    "untrusted content flagged: prompt_injection_suspected, signal_flood — scores may be manipulated"
+  ],
+  "rank": 5,
+  "opportunity": {
+    "type": "funding",
+    "title_en": "Newly funded team",
+    "title_fa": "تیم تازه تأمین مالی‌شده",
+    "offer": "Cross-chain / bridge integration"
+  },
+  "scores": {
+    "lead": {
+      "total": 55.5,
+      "F": 85.0,
+      "B": 53.0,
+      "C": 15.0,
+      "D": 73.6,
+      "R": 26.9
+    },
+    "opportunity": {
+      "total": 76.8,
+      "N": 80.9,
+      "T": 99.2,
+      "E": 55.0,
+      "Q": 63.3
+    },
+    "data_confidence": 28.8,
+    "identity_confidence": 75.0,
+    "lead_reasons": [
+      "F: sectors ['defi'], target chains [8453], 0 offer keywords in description/topics",
+      "B: funding signal (weighted by evidence quality)",
+      "C: 1 official contact channels, 0 named people from official pages"
+    ],
+    "weights": {
+      "lead": {
+        "F": 0.3,
+        "B": 0.25,
+        "C": 0.2,
+        "D": 0.15,
+        "R": 0.1
+      },
+      "opportunity": {
+        "N": 0.35,
+        "T": 0.25,
+        "E": 0.2,
+        "Q": 0.2
+      }
+    }
+  },
+  "identity_notes": [
+    "+15 official website known",
+    "+15 GitHub organisation known",
+    "+30 website links to the GitHub organisation (site → GitHub)",
+    "+20 GitHub repo/org points back to the website (GitHub → site)",
+    "+10 contract addresses published by an official source",
+    "-15 a claimed contract has no bytecode on-chain",
+    "content flags: prompt_injection_suspected, signal_flood"
+  ],
+  "signals": [
+    {
+      "type": "funding",
+      "observation": "Site claims to have raised $500M",
+      "inference": "The project reports new funding; it may have budget for development, growth or infrastructure.",
+      "inference_fa": "پروژه از تأمین مالی جدید خبر داده؛ ممکن است برای توسعه، رشد یا زیرساخت بودجه داشته باشد.",
+      "strength": 55,
+      "quality": 80,
+      "occurred_at": "2026-10-28T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://moonpump.example",
+          "source_type": "website",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": false
+        }
+      ]
+    },
+    {
+      "type": "release",
+      "observation": "Release spam published in moonpump-xyz/moonpump (#1)",
+      "inference": "The team is actively shipping; new versions often bring integration, tooling or review needs.",
+      "inference_fa": "تیم به‌طور فعال نسخه منتشر می‌کند؛ نسخه‌های جدید اغلب نیاز به یکپارچه‌سازی، ابزار یا بازبینی ایجاد می‌کنند.",
+      "strength": 70,
+      "quality": 55,
+      "occurred_at": "2026-10-28T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://github.com/moonpump-xyz/moonpump/releases#0",
+          "source_type": "github",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "release",
+      "observation": "Release spam published in moonpump-xyz/moonpump (#2)",
+      "inference": "The team is actively shipping; new versions often bring integration, tooling or review needs.",
+      "inference_fa": "تیم به‌طور فعال نسخه منتشر می‌کند؛ نسخه‌های جدید اغلب نیاز به یکپارچه‌سازی، ابزار یا بازبینی ایجاد می‌کنند.",
+      "strength": 70,
+      "quality": 55,
+      "occurred_at": "2026-10-28T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://github.com/moonpump-xyz/moonpump/releases#1",
+          "source_type": "github",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    },
+    {
+      "type": "release",
+      "observation": "Release spam published in moonpump-xyz/moonpump (#3)",
+      "inference": "The team is actively shipping; new versions often bring integration, tooling or review needs.",
+      "inference_fa": "تیم به‌طور فعال نسخه منتشر می‌کند؛ نسخه‌های جدید اغلب نیاز به یکپارچه‌سازی، ابزار یا بازبینی ایجاد می‌کنند.",
+      "strength": 70,
+      "quality": 55,
+      "occurred_at": "2026-10-28T19:00:16+00:00",
+      "evidence": [
+        {
+          "url": "https://github.com/moonpump-xyz/moonpump/releases#2",
+          "source_type": "github",
+          "observed_at": "2026-10-29T19:00:16+00:00",
+          "official": true,
+          "verified": true
+        }
+      ]
+    }
+  ],
+  "contacts": [
+    {
+      "type": "telegram",
+      "value": "https://t.me/moonpump_example",
+      "source_url": "https://moonpump.example",
+      "official": true
+    }
+  ],
+  "people": [],
+  "evidence_count": 42,
+  "suggested_action": "Human review required before any outreach: untrusted content flagged: prompt_injection_suspected, signal_flood — scores may be manipulated",
+  "suggested_action_fa": "پیش از هر تماس، بررسی انسانی لازم است: untrusted content flagged: prompt_injection_suspected, signal_flood — scores may be manipulated",
+  "cost_usd": 0.0,
+  "caveat": "Signals indicate a *possible* need. They are not proof of budget or purchase intent. Verify the sources before any outreach; do not mass-contact founders."
+}
