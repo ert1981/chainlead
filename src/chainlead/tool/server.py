@@ -7,6 +7,7 @@ Routes
   GET /static/icon.png                512x512 PNG icon
   GET /register-onchain               creator-signed ToolRegistry registration page (no keys on the server)
   GET /register-onchain/check         read-only duplicate check (eth_getLogs on the registry)
+  GET /x402-pay                       owner pays the paid route once with their own wallet (x402 v2, CDP Bazaar)
   GET /health, GET /
 
 Payment rules: nothing runs before the facilitator verified the payment; each (payer, nonce) authorization
@@ -39,6 +40,7 @@ from ..storage import Storage
 from . import icon, manifest as mf, payments
 from .config import DEFAULT_BASE_RPC, ToolSettings
 from .register_page import REGISTER_PAGE_CSP, DuplicateChecker, register_page
+from . import x402_pay_page
 
 log = logging.getLogger("chainlead.tool")
 MAX_BODY = 32_000
@@ -407,6 +409,13 @@ def make_handler(app: ToolApp):
                         raise _HttpErr(503, str(e))
                     return self._send(200, html, {"Content-Security-Policy": REGISTER_PAGE_CSP,
                                                   "X-Frame-Options": "DENY"},
+                                      ctype="text/html; charset=utf-8", head_only=head)
+                if path == "/x402-pay":
+                    routes = [{"id": "discover", "name": "ChainLead lead discovery", "path": mf.TOOL_PATH,
+                               "example": mf.EXAMPLE_INPUT}]
+                    html = x402_pay_page.page("ChainLead", s.payee_address, routes, 5_000_000)
+                    return self._send(200, html, {k: v for k, v in x402_pay_page.HEADERS.items()
+                                                  if k != "Referrer-Policy"},
                                       ctype="text/html; charset=utf-8", head_only=head)
                 if path == "/register-onchain/check":
                     try:

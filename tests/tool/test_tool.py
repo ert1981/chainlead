@@ -706,3 +706,85 @@ def test_bazaar_metadata_is_plain_description(server):
     v2 = v2_header(h)
     for s in _strings({"resource": v2["resource"], "extensions": v2["extensions"]}):
         assert not _INSTRUCTION.search(s), s
+
+
+# ------------------------------------------------------------------------------------- GET /x402-pay
+# The page script runs under node with a fake wallet/fetch (x402_pay_harness.js); the PAYMENT-SIGNATURE it
+# builds is replayed against the real server.
+import pathlib  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+from chainlead.tool import x402_pay_page  # noqa: E402
+
+USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+HARNESS = pathlib.Path(__file__).with_name("x402_pay_harness.js")
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+
+
+def run_page(html, challenges, **kw):
+    p = subprocess.run(["node", str(HARNESS)], input=json.dumps({"html": html, "challenges": challenges, "clicks": [], **kw}),
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)
+
+
+def test_x402_pay_page_has_strict_csp_and_the_live_route(server):
+    base, *_ = server()
+    st, h, html = call(base + "/x402-pay")
+    html = html.decode()
+    assert st == 200 and h["Content-Type"].startswith("text/html") and h["X-Frame-Options"] == "DENY"
+    assert h["Cache-Control"] == "no-store" and h["X-Robots-Tag"] == "noindex"
+    csp = h["Content-Security-Policy"]
+    script = re.search(r"<script>(.*?)</script>\s*</body>", html, re.S).group(1)
+    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+    assert f"script-src 'sha256-{digest}'" in csp and "connect-src 'self'" in csp and "default-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp and "unsafe-eval" not in csp
+    cfg = json.loads(html.split('<script type="application/json" id="cfg">')[1].split("</script>")[0])
+    assert cfg["usdc"] == USDC_BASE and USDC_BASE.lower() == payments.USDC["base"][1].lower() and cfg["payee"] == PAYEE
+    assert cfg["routes"] == [{"id": "discover", "name": "ChainLead lead discovery", "path": mf.TOOL_PATH,
+                              "example": mf.EXAMPLE_INPUT}]
+    assert "real payment" in html and "eip6963:requestProvider" in html and not re.search(r"__[A-Z]+__", html)
+    assert not re.search(r"private.?key|mnemonic|seed", html, re.I)
+
+
+@needs_node
+def test_x402_pay_flow_signs_eip3009_and_the_payment_settles(server):
+    base, app, fac, calls = server()
+    st, _, html = call(base + "/x402-pay")
+    st, h, _ = call(base + mf.TOOL_PATH, "POST", mf.EXAMPLE_INPUT)
+    assert st == 402
+    challenge = h["PAYMENT-REQUIRED"]
+    ch = json.loads(base64.b64decode(challenge))
+    a = ch["accepts"][0]
+    receipt = base64.b64encode(json.dumps({"success": True, "transaction": TX}).encode()).decode()
+    out = run_page(html.decode(), {mf.TOOL_PATH: challenge}, clicks=["discover"], chainId="0x1", receiptHeader=receipt)
+    assert out["price-discover"] == "<b>0.5 USDC</b>" and out["total"] == "0.5 USDC"
+    assert "wallet_switchEthereumChain" in out["wallet"]
+    assert len(out["confirms"]) == 1 and "0.5 USDC" in out["confirms"][0]
+    assert len(out["signs"]) == 1 and len(out["paid"]) == 1
+    typed = json.loads(out["signs"][0][1])
+    assert typed["domain"] == {"name": "USD Coin", "version": "2", "chainId": 8453, "verifyingContract": a["asset"]}
+    m = typed["message"]
+    assert m["to"] == PAYEE and m["value"] == a["amount"] == "500000"
+    assert int(m["validBefore"]) - int(m["validAfter"]) == 600 + a["maxTimeoutSeconds"]
+    assert TX in out["res-discover"] and "basescan.org/tx/" in out["res-discover"]
+    sig = out["paid"][0]["signature"]
+    sent = json.loads(base64.b64decode(sig))
+    assert sent["x402Version"] == 2 and sent["accepted"] == a and sent["resource"] == ch["resource"]
+    assert sent.get("extensions") == ch.get("extensions") and sent["payload"]["authorization"] == m
+    st, h, b = call(base + mf.TOOL_PATH, "POST", mf.EXAMPLE_INPUT, {"PAYMENT-SIGNATURE": sig})
+    assert st == 200 and [k for k, *_ in fac.calls] == ["verify", "settle"]
+    assert json.loads(base64.b64decode(h["PAYMENT-RESPONSE"]))["transaction"] == TX
+
+
+@needs_node
+@pytest.mark.parametrize("over", [{"asset": "0x833589fCD6eDb6E08f4c7C32D2A403d29B4C55Bb"}, {"payTo": "0x" + "77" * 20},
+                                  {"network": "eip155:84532"}, {"amount": "5000001"}])
+def test_x402_pay_page_refuses_unexpected_terms_without_signing(over):
+    a = {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE, "amount": "500000", "payTo": PAYEE,
+         "maxTimeoutSeconds": 300, "extra": {"name": "USD Coin", "version": "2"}, **over}
+    ch = base64.b64encode(json.dumps({"x402Version": 2, "resource": {"url": "x"}, "accepts": [a]}).encode()).decode()
+    html = x402_pay_page.page("S", PAYEE, [{"id": "a", "name": "A", "path": "/a", "example": {}}], 5_000_000)
+    out = run_page(html, {"/a": ch}, clicks=["a"])
+    assert out["signs"] == [] and out["paid"] == [] and out["confirms"] == []
