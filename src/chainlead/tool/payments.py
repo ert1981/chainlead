@@ -202,6 +202,52 @@ def payment_response_header(settled: dict, network: str) -> str:
     return base64.b64encode(json.dumps(body).encode()).decode()
 
 
+log = logging.getLogger("chainlead.tool.x402")
+_last = threading.local()
+
+
+def last_settle_error() -> str | None:
+    """Reason of this thread's most recent failed settle (shown to the payer; no secrets, no signatures)."""
+    return getattr(_last, "settle", None)
+
+
+def _safe(text) -> str:
+    """Facilitator text for logs/clients: long hex (signatures, calldata) elided, whitespace squashed, capped."""
+    text = re.sub(r"0x[0-9a-fA-F]{80,}", "0x…", str(text))
+    return " ".join(text.split())[:200]
+
+
+def _reason(data) -> str | None:
+    """invalidReason/errorReason (+ invalidMessage/errorMessage) from a facilitator JSON body."""
+    if not isinstance(data, dict):
+        return None
+    code = data.get("invalidReason") or data.get("errorReason") or data.get("errorType") or (
+        data.get("error") if isinstance(data.get("error"), str) else None)
+    msg = data.get("invalidMessage") or data.get("errorMessage") or data.get("message")
+    if not code and not msg:
+        return None
+    return _safe(f"{code}: {msg}" if code and msg else (code or msg))
+
+
+def _verify_failure(kind: str, status: int | None, data, text: str = "") -> "PaymentError":
+    """4xx with isValid=false / invalidReason = the facilitator rejected the PAYMENT (x402 402 with the reason;
+    CDP answers invalid payments with HTTP 400). Anything else is a facilitator problem (502 + status/reason)."""
+    reason = _reason(data)
+    rejected = (isinstance(data, dict) and (data.get("isValid") is False or data.get("invalidReason"))
+                and status is not None and 400 <= status < 500 and status not in (401, 403, 429))
+    if rejected:
+        log.warning("x402 %s verify rejected the payment: HTTP %s %s", kind, status, reason)
+        return PaymentError(402, (reason or "invalid_payment")[:200])
+    log.warning("x402 %s verify failed: HTTP %s %s", kind, status, reason or text)
+    return PaymentError(502, f"payment_facilitator_error: HTTP {status}: {reason or text or 'no body'}"[:240])
+
+
+def _settle_failed(kind: str, status, data, text: str = "") -> None:
+    reason = _reason(data) or text or "unknown"
+    _last.settle = f"HTTP {status}: {reason}" if status else reason
+    log.warning("x402 %s settle failed: %s", kind, _last.settle)
+
+
 class Facilitator:
     """PayAI (or any plain HTTP x402 facilitator without auth)."""
     kind = "payai"
@@ -226,35 +272,47 @@ class Facilitator:
                 raw = r.read(200_000)
                 status = r.status
         except urllib.error.HTTPError as e:
-            return e.code, None
+            # Non-2xx answers carry the facilitator's reason (CDP: HTTP 400 {"isValid": false, "invalidReason"}).
+            try:
+                raw, status = e.read(200_000), e.code
+            except OSError:
+                return e.code, None
         try:
             return status, json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            return status, None
+            return status, _safe(raw.decode("utf-8", "replace"))
 
     def verify(self, payment: dict, requirements: dict) -> dict:
         try:
             status, data = self._post("/verify", payment, requirements)
-        except (urllib.error.URLError, OSError):
+        except (urllib.error.URLError, OSError) as e:
+            log.warning("x402 %s verify unreachable: %s", self.kind, type(e).__name__)
             raise PaymentError(502, "payment_facilitator_unreachable")
         if status != 200:
-            raise PaymentError(502, "payment_facilitator_unreachable")
+            raise _verify_failure(self.kind, status, data, data if isinstance(data, str) else "")
         if not isinstance(data, dict):
+            log.warning("x402 %s verify: HTTP 200 without a JSON object", self.kind)
             raise PaymentError(502, "payment_facilitator_bad_response")
         if data.get("isValid") is not True:
-            raise PaymentError(402, str(data.get("invalidReason") or "invalid_payment")[:120])
+            reason = _reason(data) or "invalid_payment"
+            log.warning("x402 %s verify rejected the payment: HTTP 200 %s", self.kind, reason)
+            raise PaymentError(402, reason[:200])
         return data
 
     def settle(self, payment: dict, requirements: dict) -> tuple[dict | None, bool]:
         """(settle response or None, retryable). retryable=True means the authorization was provably not
         broadcast (network error or 429), so the replay reservation may be released."""
+        _last.settle = None
         try:
             status, data = self._post("/settle", payment, requirements)
-        except (urllib.error.URLError, OSError):
+        except (urllib.error.URLError, OSError) as e:
+            _settle_failed(self.kind, None, None, "unreachable: " + type(e).__name__)
             return None, True
         if status != 200:
+            _settle_failed(self.kind, status, data, data if isinstance(data, str) else "")
             return None, status == 429
         if not isinstance(data, dict) or data.get("success") is not True or not data.get("transaction"):
+            _settle_failed(self.kind, 200, data, "no transaction")
             return None, False
         return data, False
 

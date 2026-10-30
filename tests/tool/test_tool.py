@@ -276,7 +276,7 @@ def test_garbage_payment_headers_are_402(server, header):
 def test_failed_settlement_returns_no_result(server):
     base, app, fac, calls = server(facilitator=FakeFacilitator(settle_ok=False, retryable=True))
     st, _, b = call(base + mf.TOOL_PATH, "POST", VALID, {"X-PAYMENT": v1_payment("02")})
-    assert st == 402 and b["error"] == "settlement_failed" and "leads" not in b
+    assert st == 402 and b["error"].startswith("settlement_failed") and "leads" not in b
     assert app.replay.reserve("x402:base:%s:%s:0x%s" % (payments.USDC["base"][1], PAYER, "02" * 32))  # released
 
 
@@ -788,3 +788,53 @@ def test_x402_pay_page_refuses_unexpected_terms_without_signing(over):
     html = x402_pay_page.page("S", PAYEE, [{"id": "a", "name": "A", "path": "/a", "example": {}}], 5_000_000)
     out = run_page(html, {"/a": ch}, clicks=["a"])
     assert out["signs"] == [] and out["paid"] == [] and out["confirms"] == []
+
+
+# ------------------------------------------------------------------------------------- facilitator failure reasons
+import io  # noqa: E402
+
+
+def _http_error(status, body: bytes):
+    def urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, status, "err", {}, io.BytesIO(body))
+    return urlopen
+
+
+def test_facilitator_400_invalid_payment_is_402_with_the_reason(monkeypatch, caplog):
+    f = payments.Facilitator("https://facilitator.test")
+    monkeypatch.setattr(payments.urllib.request, "urlopen", _http_error(400, json.dumps(
+        {"isValid": False, "invalidReason": "invalid_exact_evm_payload_signature", "invalidMessage": "bad sig"}).encode()))
+    with caplog.at_level("WARNING", logger="chainlead.tool.x402"):
+        with pytest.raises(payments.PaymentError) as e:
+            f.verify({}, {})
+    assert (e.value.status, e.value.error) == (402, "invalid_exact_evm_payload_signature: bad sig")
+    assert "HTTP 400" in caplog.text
+
+
+@pytest.mark.parametrize("status,body,shown", [
+    (401, b'{"errorType":"unauthorized","errorMessage":"invalid JWT"}', "HTTP 401: unauthorized: invalid JWT"),
+    (503, b"upstream down 0x" + b"cd" * 65, "HTTP 503: upstream down 0x\u2026"),
+])
+def test_facilitator_auth_or_server_errors_are_502_with_status_and_reason(monkeypatch, caplog, status, body, shown):
+    f = payments.Facilitator("https://facilitator.test")
+    monkeypatch.setattr(payments.urllib.request, "urlopen", _http_error(status, body))
+    with caplog.at_level("WARNING", logger="chainlead.tool.x402"):
+        with pytest.raises(payments.PaymentError) as e:
+            f.verify({}, {})
+    assert e.value.status == 502 and e.value.error == "payment_facilitator_error: " + shown
+    assert "cd" * 40 not in caplog.text
+
+
+def test_settle_failure_reason_is_logged_and_returned(server, monkeypatch):
+    base, app, fac, calls = server(facilitator=payments.Facilitator("https://facilitator.test"))
+    replies = iter([(200, {"isValid": True, "payer": PAYER}), (400, {"success": False, "errorReason": "invalid_transaction_state"})])
+    monkeypatch.setattr(payments.Facilitator, "_post", lambda self, path, p, r: next(replies))
+    st, h, b = call(base + mf.TOOL_PATH, "POST", VALID, {"PAYMENT-SIGNATURE": v2_payment("e1")})
+    assert st == 402 and b["error"] == "settlement_failed: HTTP 400: invalid_transaction_state"
+
+
+def test_verify_502_body_carries_the_reason(server, monkeypatch):
+    base, *_ = server(facilitator=payments.Facilitator("https://facilitator.test"))
+    monkeypatch.setattr(payments.Facilitator, "_post", lambda self, path, p, r: (500, {"errorType": "internal"}))
+    st, h, b = call(base + mf.TOOL_PATH, "POST", VALID, {"PAYMENT-SIGNATURE": v2_payment("e2")})
+    assert st == 502 and b == {"error": "payment_facilitator_error: HTTP 500: internal"}

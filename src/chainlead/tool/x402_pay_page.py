@@ -33,6 +33,15 @@ function esc(s){ return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").r
 function errMsg(e){ return esc(e && e.code === 4001 ? "لغو شد · Rejected in wallet" : (e && e.message ? e.message : e)); }
 function usdc(atomic){ const v = BigInt(atomic); const f = (v % 1000000n).toString().padStart(6, "0").replace(/0+$/, ""); return (v / 1000000n).toString() + (f ? "." + f : ""); }
 function txLink(h){ return '<a target="_blank" rel="noopener" href="https://basescan.org/tx/' + esc(h) + '">' + esc(h) + "</a>"; }
+function errText(body, res){
+  if (body && typeof body.error === "string") return body.error;
+  if (body && body.error && typeof body.error.message === "string") return body.error.message;
+  if (body && typeof body.detail === "string") return body.detail;
+  if (body && typeof body.message === "string") return body.message;
+  const h = res && res.headers.get("PAYMENT-REQUIRED");
+  if (h) { try { const pr = b64json(h); if (pr && pr.error) return String(pr.error); } catch (e) {} }
+  return "failed";
+}
 function setStatus(html){ $("status").innerHTML = html; }
 function b64json(s){ const bin = atob(s); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return JSON.parse(new TextDecoder().decode(bytes)); }
 function tob64(obj){ const bytes = new TextEncoder().encode(JSON.stringify(obj)); let bin = ""; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin); }
@@ -133,10 +142,16 @@ async function pay(r){
   try {
     await ensureBase();
     const { pr, a } = await challenge(r);
+    let code = "0x";
+    try { code = String(await call("eth_getCode", [account, "latest"], 10000) || "0x"); } catch (e) {}
+    const smart = code !== "0x" && code !== "0x0";
+    const smartNote = !smart ? "" : "\nهشدار: این حساب کد قرارداد دارد (اسمارت‌اکانت یا EIP-7702). USDC امضا را با isValidSignature خود حساب (ERC-1271) چک می‌کند و بسیاری از این حساب‌ها امضای عادی را رد می‌کنند؛ احتمالاً پرداخت رد می‌شود. از یک حساب عادی (EOA بدون EIP-7702) پرداخت کن." +
+      "\nWARNING: this account has contract code (" + (code.slice(0, 8) === "0xef0100" ? "EIP-7702 delegation to 0x" + code.slice(8, 48) : "smart account") +
+      "). USDC then checks the signature through the account's ERC-1271 isValidSignature, and many such accounts reject a plain wallet signature, so this payment will likely be refused. Pay from a plain EOA (no EIP-7702 delegation).\n";
     const prev = localStorage.getItem("x402pay-" + r.path);
     const msg = "پرداخت واقعی USDC روی Base · REAL payment in USDC on Base mainnet\n\n" + r.name + "\n" + r.path +
       "\nمبلغ · Amount: " + usdc(a.amount) + " USDC\nبه · To: " + a.payTo + "\n" +
-      (prev ? "\nهشدار: این مسیر قبلاً از این مرورگر پرداخت شده · Already paid from this browser: " + prev + "\n" : "") + "\nادامه؟ · Continue?";
+      smartNote + (prev ? "\nهشدار: این مسیر قبلاً از این مرورگر پرداخت شده · Already paid from this browser: " + prev + "\n" : "") + "\nادامه؟ · Continue?";
     if (!confirm(msg)) { out.innerHTML = "لغو شد · Cancelled."; return; }
     const now = Math.floor(Date.now() / 1000);
     const auth = { from: account, to: a.payTo, value: String(a.amount), validAfter: String(now - 600),
@@ -167,7 +182,7 @@ async function pay(r){
       localStorage.setItem("x402pay-" + r.path, receipt.transaction);
       html += '<span class="ok">پرداخت تسویه شد ✓ · Settled ✓</span><br>tx: ' + txLink(receipt.transaction);
     } else if (res.ok) html += '<span class="warn">پاسخ بدون رسید پرداخت (پرداخت گرفته نشد) · No payment receipt (not charged)</span>';
-    else html += '<span class="err">' + esc((body && (body.error || body.message)) || "failed") + "</span>";
+    else html += '<span class="err">' + esc(errText(body, res)) + "</span>";
     if (body) html += "<details><summary>پاسخ · Response</summary><pre>" + esc(JSON.stringify(body, null, 2).slice(0, 4000)) + "</pre></details>";
     out.innerHTML = html;
   } catch (e) {

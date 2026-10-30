@@ -21,6 +21,7 @@ const ethereum = {
     out.wallet.push(method);
     if (method === "eth_accounts" || method === "eth_requestAccounts") return ["0x00000000000000000000000000000000000000aa"];
     if (method === "eth_chainId") return chainId;
+    if (method === "eth_getCode") return input.code || "0x";
     if (method === "wallet_switchEthereumChain") { chainId = params[0].chainId; return null; }
     if (method === "eth_signTypedData_v4") { out.signs.push(params); await new Promise(r => setTimeout(r, 20)); return "0x" + "ab".repeat(65); }
     throw new Error("unexpected " + method);
@@ -33,6 +34,7 @@ async function fetch(path, opts) {
   if (sig) {
     out.paid.push({ path, signature: sig });
     const h = input.receiptHeader ? { "PAYMENT-RESPONSE": input.receiptHeader } : {};
+    if (input.paidStatus) return { status: input.paidStatus, ok: false, headers: headers({}), json: async () => input.paidBody };
     return { status: 200, ok: true, headers: headers(h), json: async () => (input.paidBody || { status: "ok" }) };
   }
   const c = input.challenges[path];

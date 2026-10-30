@@ -290,7 +290,8 @@ class ToolApp:
         if not settled:
             if retryable:
                 self.replay.release(key)
-            return self.payment_required("settlement_failed", host_base)
+            why = payments.last_settle_error()
+            return self.payment_required(f"settlement_failed: {why}"[:240] if why else "settlement_failed", host_base)
         tx = str(settled["transaction"])[:100]
         payer = str(settled.get("payer") or verified.get("payer") or "")[:42]
         self.replay.mark_settled(key, tx, mf.TOOL_PATH)
