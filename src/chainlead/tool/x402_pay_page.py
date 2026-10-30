@@ -27,7 +27,7 @@ const C = JSON.parse(document.getElementById("cfg").textContent);
 const CHAIN_HEX = "0x2105";
 const NETWORK = "eip155:8453";
 const USDC = C.usdc.toLowerCase();
-let eth = null, account = null, busy = false, listening = false, lastQuote = null;
+let eth = null, account = null, busy = false, lastQuote = null;
 const $ = (id) => document.getElementById(id);
 function esc(s){ return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function errMsg(e){ return esc(e && e.code === 4001 ? "لغو شد · Rejected in wallet" : (e && e.message ? e.message : e)); }
@@ -51,34 +51,91 @@ function call(method, params, ms){
   if (!ms) return p;
   return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout (" + method + ")")), ms))]);
 }
-// Wallet discovery: window.ethereum (also when injected late), EIP-6963 announcements, multi-provider arrays.
+// Wallet discovery. EIP-6963 first: every wallet announces itself, MetaMask (rdns io.metamask) is the default,
+// a picker lists all announced wallets (the choice is remembered). Without EIP-6963: window.ethereum.providers
+// (isMetaMask && !isPhantom), then window.ethereum. Phantom & co. also set isMetaMask, so rdns is what counts.
+const WALLET_KEY = "x402pay-wallet";
 const announced = [];
-window.addEventListener("eip6963:announceProvider", (ev) => { if (ev && ev.detail && ev.detail.provider) announced.push(ev.detail); });
-function pickProvider(){
+let walletRdns = null;
+window.addEventListener("eip6963:announceProvider", (ev) => {
+  const d = ev && ev.detail;
+  if (!d || !d.provider || typeof d.provider.request !== "function" || !d.info) return;
+  const uuid = String(d.info.uuid || d.info.rdns || announced.length);
+  if (announced.some(x => x.uuid === uuid || x.provider === d.provider)) return;
+  announced.push({ uuid, rdns: String(d.info.rdns || ""), name: String(d.info.name || d.info.rdns || "wallet"), provider: d.provider });
+  renderPicker();
+});
+function savedRdns(){ try { return localStorage.getItem(WALLET_KEY); } catch (e) { return null; } }
+function pickAnnounced(){
+  const saved = savedRdns();
+  return (saved && announced.find(d => d.rdns === saved)) || announced.find(d => d.rdns === "io.metamask") || null;
+}
+function pickLegacy(){
   const w = window.ethereum;
-  if (w && Array.isArray(w.providers) && w.providers.length) return w.providers.find(p => p.isMetaMask) || w.providers.find(p => p.isCoinbaseWallet) || w.providers[0];
-  if (w && typeof w.request === "function") return w;
-  if (announced.length) return (announced.find(d => /metamask/i.test(d.info && d.info.rdns || "")) || announced[0]).provider;
+  const ok = (p) => p && typeof p.request === "function";
+  if (w && Array.isArray(w.providers)) {
+    const mm = w.providers.find(p => ok(p) && p.isMetaMask && !p.isPhantom);
+    if (mm) return mm;
+  }
+  if (ok(w)) return w;
+  if (w && Array.isArray(w.providers)) return w.providers.find(ok) || null;
+  return null;
+}
+function choose(){
+  const d = pickAnnounced();
+  if (d) return { provider: d.provider, rdns: d.rdns };
+  const legacy = pickLegacy();
+  if (legacy) {
+    const same = announced.find(a => a.provider === legacy);
+    return { provider: legacy, rdns: same ? same.rdns : null };
+  }
+  if (announced.length) return { provider: announced[0].provider, rdns: announced[0].rdns };
   return null;
 }
 async function findProvider(waitMs){
   try { window.dispatchEvent(new Event("eip6963:requestProvider")); } catch (e) {}
   const end = Date.now() + waitMs;
-  for (;;) { const p = pickProvider(); if (p || Date.now() >= end) return p; await new Promise(r => setTimeout(r, 150)); }
+  for (;;) {
+    // give EIP-6963 wallets (MetaMask) a moment to announce before settling on a fallback
+    const legacy = pickLegacy();
+    if (pickAnnounced() || (legacy && legacy.isMetaMask && !legacy.isPhantom) || Date.now() >= end) return choose();
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+function renderPicker(){
+  const sel = $("wallet");
+  if (!sel) return;
+  if (!announced.length) { sel.hidden = true; return; }
+  sel.hidden = false;
+  sel.innerHTML = announced.map(d => '<option value="' + esc(d.uuid) + '"' + (d.rdns && d.rdns === walletRdns ? " selected" : "") + ">" + esc(d.name) + (d.rdns ? " (" + esc(d.rdns) + ")" : "") + "</option>").join("") +
+    (walletRdns === null && eth ? '<option value="" selected>window.ethereum</option>' : "");
+}
+function useProvider(c){
+  eth = c ? c.provider : null;
+  walletRdns = c ? c.rdns : null;
+  account = null;
+  listen();
+  renderPicker();
 }
 function noWallet(){
   const here = location.host + location.pathname;
   setStatus('<span class="err">کیف‌پول مرورگر پیدا نشد · No browser wallet found.</span> ' +
     '<a href="https://metamask.app.link/dapp/' + esc(here) + '">Open in MetaMask</a> · <a href="https://go.cb-w.com/dapp?cb_url=' + encodeURIComponent(location.href) + '">Open in Coinbase Wallet</a>');
 }
+const listened = [];
 function listen(){
-  if (listening || !eth || typeof eth.on !== "function") return;
-  listening = true;
-  eth.on("accountsChanged", () => refresh().catch(showErr));
-  eth.on("chainChanged", () => refresh().catch(showErr));
+  const p = eth;
+  if (!p || typeof p.on !== "function" || listened.includes(p)) return;
+  listened.push(p);
+  // events from a wallet that is not the chosen one are ignored
+  p.on("accountsChanged", () => { if (p === eth) refresh().catch(showErr); });
+  p.on("chainChanged", () => { if (p === eth) refresh().catch(showErr); });
 }
 function showErr(e){ setStatus('<span class="err">' + errMsg(e) + "</span>"); }
-function setButtons(){ for (const r of C.routes) $("pay-" + r.id).disabled = busy || !account || !r.price; }
+function setButtons(){
+  for (const r of C.routes) $("pay-" + r.id).disabled = busy || !account || !r.price;
+  const sel = $("wallet"); if (sel) sel.disabled = busy;
+}
 async function refresh(){
   if (!eth) return;
   const accts = await call("eth_accounts", null, 10000);
@@ -193,15 +250,25 @@ async function pay(r){
 }
 for (const r of C.routes) $("pay-" + r.id).onclick = () => pay(r);
 $("connect").onclick = async () => {
+  if (busy) return;
   setStatus("در حال پیدا کردن کیف‌پول… · Looking for a browser wallet…");
-  eth = eth || await findProvider(1500);
+  if (!eth) useProvider(await findProvider(800));
   if (!eth) { noWallet(); return; }
-  listen();
   try { await call("eth_requestAccounts"); await refresh(); } catch (e) { showErr(e); }
 };
-findProvider(2000).then((p) => {
-  if (!p) { setStatus("کیف‌پول هنوز پیدا نشد؛ «اتصال کیف‌پول» را بزن · No wallet detected yet — press Connect wallet."); return; }
-  eth = p; listen(); refresh().catch(showErr);
+$("wallet").onchange = async () => {
+  if (busy) { renderPicker(); return; }
+  const d = announced.find(x => x.uuid === $("wallet").value);
+  if (!d) return;
+  try { localStorage.setItem(WALLET_KEY, d.rdns); } catch (e) {}
+  useProvider({ provider: d.provider, rdns: d.rdns });
+  setButtons();
+  setStatus("کیف‌پول: " + esc(d.name) + " — «اتصال کیف‌پول» را بزن · Wallet: " + esc(d.name) + " — press Connect wallet.");
+};
+findProvider(700).then((c) => {
+  if (eth) return;  // the user already connected or picked meanwhile
+  if (!c) { setStatus("کیف‌پول هنوز پیدا نشد؛ «اتصال کیف‌پول» را بزن · No wallet detected yet — press Connect wallet."); return; }
+  useProvider(c); refresh().catch(showErr);
 });
 loadPrices();
 '''
@@ -220,6 +287,7 @@ PAGE = r'''<!doctype html>
  .fa{direction:rtl;text-align:right}
  .card{background:#181b22;border:1px solid #2a2f3a;border-radius:12px;padding:16px;margin:14px 0}
  button{background:#2f6fed;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:1rem;cursor:pointer;margin:6px 0}
+ select{background:#0f1115;color:#e8e8ea;border:1px solid #2a2f3a;border-radius:8px;padding:9px;font-size:.95rem;margin:6px}
  button:disabled{background:#3a3f4a;color:#8a8f99;cursor:not-allowed}
  code,.mono,pre{font-family:ui-monospace,Menlo,monospace;font-size:.85em;word-break:break-all;direction:ltr;white-space:pre-wrap}
  .warn{color:#ffb84d} .ok{color:#4ddc8a} .err{color:#ff6b6b}
@@ -237,6 +305,7 @@ PAGE = r'''<!doctype html>
 
 <div class="card">
  <button id="connect">اتصال کیف‌پول · Connect wallet</button>
+ <select id="wallet" hidden aria-label="Wallet"></select>
  <div id="status" class="mono">—</div>
 </div>
 

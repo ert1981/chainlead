@@ -838,3 +838,35 @@ def test_verify_502_body_carries_the_reason(server, monkeypatch):
     monkeypatch.setattr(payments.Facilitator, "_post", lambda self, path, p, r: (500, {"errorType": "internal"}))
     st, h, b = call(base + mf.TOOL_PATH, "POST", VALID, {"PAYMENT-SIGNATURE": v2_payment("e2")})
     assert st == 502 and b == {"error": "payment_facilitator_error: HTTP 500: internal"}
+
+
+# ------------------------------------------------------------------------------------- /x402-pay wallet choice
+PHANTOM_W = {"name": "Phantom", "rdns": "app.phantom", "isMetaMask": True, "isPhantom": True, "uuid": "p"}
+METAMASK_W = {"name": "MetaMask", "rdns": "io.metamask", "isMetaMask": True, "uuid": "m"}
+
+
+def _pay_fixture():
+    a = {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE, "amount": "500000", "payTo": PAYEE,
+         "maxTimeoutSeconds": 300, "extra": {"name": "USD Coin", "version": "2"}}
+    ch = base64.b64encode(json.dumps({"x402Version": 2, "resource": {"url": "x"}, "accepts": [a]}).encode()).decode()
+    return x402_pay_page.page("S", PAYEE, [{"id": "a", "name": "A", "path": "/a", "example": {}}], 5_000_000), {"/a": ch}
+
+
+@needs_node
+def test_x402_pay_defaults_to_announced_metamask_over_phantom_window_ethereum():
+    html, ch = _pay_fixture()
+    out = run_page(html, ch, wallets=[PHANTOM_W, METAMASK_W], windowEthereum=0, clicks=["a"], chainId="0x1")
+    assert out["signedBy"] == ["MetaMask"] and {n for n, _ in out["walletCalls"]} == {"MetaMask"}
+    assert '<option value="m" selected>MetaMask (io.metamask)</option>' in out["picker"]["html"]
+
+
+@needs_node
+def test_x402_pay_picker_and_legacy_fallbacks():
+    html, ch = _pay_fixture()
+    out = run_page(html, ch, wallets=[PHANTOM_W, METAMASK_W], windowEthereum=0, select="p", clicks=["a"])
+    assert out["signedBy"] == ["Phantom"] and out["store"]["x402pay-wallet"] == "app.phantom"
+    w = [{**PHANTOM_W, "announce": False}, {**METAMASK_W, "announce": False}]
+    out = run_page(html, ch, wallets=w, windowEthereum=[0, 1], clicks=["a"])
+    assert out["signedBy"] == ["MetaMask"]
+    out = run_page(html, ch, wallets=[{**PHANTOM_W, "announce": False}], windowEthereum=0, clicks=["a"], wait=1200)
+    assert out["signedBy"] == ["Phantom"]
